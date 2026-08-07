@@ -1,0 +1,11 @@
+target/
+*.class
+.idea/
+*.iml
+.vscode/
+
+# Agent instructions - never publish these
+CLAUDE.md
+.claude/
+AGENTS.md
+.cursorrules

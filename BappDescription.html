@@ -1,0 +1,22 @@
+<p>The Session Handler Plus (SH+) Burp Suite extension offers enhanced session handling capabilities for JWTs, access tokens, refresh tokens, and CSRF tokens. It captures tokens straight out of responses and injects them into outgoing requests automatically, so no session handling rules, macros or cookie jar configuration are required.</p>
+
+<p>Main features of this extension:</p>
+<ol>
+	<li>
+		Get tokens from the response and hold them in memory without the need for an additional request to get valid tokens. These tokens can be used in different places such as request headers, request body, with customizable formats like prefix, suffix, etc. from the GUI.
+	</li>
+	<li>
+		Rewrite outgoing requests from the HTTP listener, before they are sent, with a per-tool switch for Proxy, Repeater, Scanner, Intruder and the rest. No session handling rules or macros to configure.
+	</li>
+	<li>
+		Validate the request/response before reading the tokens to avoid processing unnecessary responses.
+	</li>
+	<li>
+		Store different applications' tokens using the 'Shp-Path' request header. This helps when working with multiple APIs with the same structure but different authentication/refresh tokens.
+	</li>
+	<li>
+		See every captured token live in the extension tab, with its path, length, value, capture time and source URL.
+	</li>
+</ol>
+
+<p>For further usage information and screenshots, please check out the repository.</p>
