@@ -9,20 +9,30 @@ import java.awt.Cursor;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.font.TextAttribute;
 import java.net.URI;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -35,11 +45,13 @@ import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.border.Border;
+import javax.swing.border.TitledBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.DefaultTableModel;
@@ -47,15 +59,21 @@ import javax.swing.table.DefaultTableModel;
 /**
  * The XsessionHandler tab.
  *
- * Deliberately plain: stock Swing components, the host look and feel's own
- * colours and fonts, and grouped titled borders. Nothing here paints itself,
- * so the tab looks like the rest of Burp in both the light and the dark theme
- * and needs no upkeep when Burp restyles.
+ * Stock Swing throughout, with the host look and feel's own colours and fonts,
+ * so the tab matches the rest of Burp in either theme. The one painted control
+ * is the master toggle, because an on/off switch reads its state faster than a
+ * checkbox does.
+ *
+ * Note there is no HTML anywhere in here. Burp runs with Swing's HTML renderer
+ * disabled, so any markup in a label is shown to the user as literal text.
  */
 public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.StatusSink, TokenStore.Listener {
 
     private static final String[] COLUMNS = { "Token", "Scope", "Len", "Value", "Captured", "Tool", "Source URL" };
     private static final int TAB_TOKENS = 2;
+
+    /** Roughly the number of characters a note wraps at. */
+    private static final int NOTE_WRAP = 115;
 
     private final IBurpExtenderCallbacks callbacks;
     private final MyHttpListener httpListener;
@@ -67,8 +85,8 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
     private final JPanel captureBody = column();
     private final JPanel injectBody = column();
 
-    private final JCheckBox captureToggle = new JCheckBox("Capture", Config.CAPTURE_ENABLED);
-    private final JCheckBox injectToggle = new JCheckBox("Inject", Config.AUTO_REPLACE_ENABLED);
+    private final Toggle captureToggle = new Toggle(Config.CAPTURE_ENABLED);
+    private final Toggle injectToggle = new Toggle(Config.AUTO_REPLACE_ENABLED);
     private final JLabel captureState = new JLabel();
     private final JLabel injectState = new JLabel();
 
@@ -91,6 +109,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             return column == 2 ? Integer.class : String.class;
         }
     };
+
     /** Columns are narrower than a token, so the full value lives in a tooltip. */
     private final JTable table = new JTable(tableModel) {
         @Override
@@ -161,14 +180,15 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
 
         JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
         JLabel name = new JLabel("XsessionHandler " + Config.EXT_VERSION);
-        name.setFont(name.getFont().deriveFont(java.awt.Font.BOLD));
+        name.setFont(name.getFont().deriveFont(Font.BOLD));
         titleRow.add(name);
         titleRow.add(new JLabel("- token capture and injection, straight from the HTTP listener."));
-        titleRow.add(new JLabel("  Built by"));
+        titleRow.add(Box.createHorizontalStrut(8));
+        titleRow.add(new JLabel("Built by"));
         titleRow.add(link("@" + Config.AUTHOR_HANDLE, Config.AUTHOR_LINK));
+        titleRow.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        JPanel switchRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
-        captureToggle.addActionListener((ActionEvent e) -> {
+        captureToggle.addActionListener(e -> {
             boolean on = captureToggle.isSelected();
             Config.CAPTURE_ENABLED = on;
             setEnabledDeep(captureBody, on);
@@ -180,7 +200,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             refreshStats();
             say("Capture " + (on ? "enabled - responses are being read." : "paused - no tokens will be read."), !on);
         });
-        injectToggle.addActionListener((ActionEvent e) -> {
+        injectToggle.addActionListener(e -> {
             boolean on = injectToggle.isSelected();
             Config.AUTO_REPLACE_ENABLED = on;
             setEnabledDeep(injectBody, on);
@@ -190,21 +210,32 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 }
             }
             refreshStats();
-            say("Inject " + (on ? "enabled - outgoing requests are rewritten." : "paused - requests go out as-is."), !on);
+            say("Inject " + (on ? "enabled - outgoing requests are rewritten." : "paused - requests go out as-is."),
+                    !on);
         });
         captureToggle.setToolTipText("Read tokens out of responses");
         injectToggle.setToolTipText("Rewrite outgoing requests with the tokens");
 
+        JPanel switchRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
         switchRow.add(captureToggle);
+        switchRow.add(boldLabel("Capture"));
         switchRow.add(captureState);
-        switchRow.add(Box.createHorizontalStrut(16));
+        switchRow.add(Box.createHorizontalStrut(24));
         switchRow.add(injectToggle);
+        switchRow.add(boldLabel("Inject"));
         switchRow.add(injectState);
+        switchRow.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         header.add(titleRow);
         header.add(switchRow);
         header.add(Box.createVerticalStrut(4));
         return header;
+    }
+
+    private static JLabel boldLabel(String text) {
+        JLabel label = new JLabel(text);
+        label.setFont(label.getFont().deriveFont(Font.BOLD));
+        return label;
     }
 
     // ----------------------------------------------------------- capture tab
@@ -271,8 +302,9 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         JPanel tools = group("Which Burp tools to rewrite");
         tools.add(note("Extender is off by default so your own token-fetch traffic "
                 + "is not rewritten with a stale value."));
-        JPanel toolRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 2));
+
         final JCheckBox[] boxes = new JCheckBox[Config.TOOLS.length];
+        JPanel toolChecks = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 2));
         for (int i = 0; i < Config.TOOLS.length; i++) {
             final Config.Tool tool = Config.TOOLS[i];
             JCheckBox box = new JCheckBox(tool.label, tool.enabled);
@@ -281,13 +313,19 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 say("Injection for " + tool.label + " " + (tool.enabled ? "on." : "off."), false);
             });
             boxes[i] = box;
-            toolRow.add(box);
+            toolChecks.add(box);
         }
-        tools.add(toolRow);
-        JPanel quick = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+
+        JPanel quick = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 2));
         quick.add(button("Select All", e -> setAllTools(boxes, true)));
         quick.add(button("Select None", e -> setAllTools(boxes, false)));
-        tools.add(quick);
+
+        // Checks on the left, the two bulk actions pinned to the right edge.
+        JPanel toolRow = new JPanel(new BorderLayout());
+        toolRow.add(toolChecks, BorderLayout.WEST);
+        toolRow.add(quick, BorderLayout.EAST);
+        toolRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, quick.getPreferredSize().height + 8));
+        tools.add(toolRow);
 
         JPanel token1 = group("TOKEN-1 goes here (JWT / access token)");
         JPanel grid1 = grid();
@@ -353,12 +391,15 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
 
         JPanel empty = new JPanel(new BorderLayout());
         empty.setBorder(UIManager.getBorder("ScrollPane.border"));
-        JLabel hint = new JLabel("<html><div style='text-align:center'>"
-                + "No tokens captured yet.<br><br>"
-                + "Log in to your application through Burp.<br>"
-                + "If nothing shows up, check the RegEx on the Capture tab."
-                + "</div></html>", SwingConstants.CENTER);
-        empty.add(hint, BorderLayout.CENTER);
+        JPanel lines = new JPanel();
+        lines.setLayout(new BoxLayout(lines, BoxLayout.Y_AXIS));
+        lines.add(centred("No tokens captured yet."));
+        lines.add(Box.createVerticalStrut(10));
+        lines.add(centred("Log in to your application through Burp."));
+        lines.add(centred("If nothing shows up, check the RegEx on the Capture tab."));
+        JPanel centre = new JPanel(new GridBagLayout());
+        centre.add(lines, new GridBagConstraints());
+        empty.add(centre, BorderLayout.CENTER);
 
         tableArea.add(empty, "empty");
         tableArea.add(scroll, "table");
@@ -377,6 +418,15 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         panel.add(note("Tokens are held in memory only and are cleared when the extension unloads. "
                 + "Click a column heading to sort."), BorderLayout.SOUTH);
         return panel;
+    }
+
+    private static JLabel centred(String text) {
+        JLabel label = new JLabel(text, SwingConstants.CENTER);
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        // The padding is load-bearing: the look and feel measures text slightly
+        // narrower than it paints it, and the last character is otherwise cut.
+        label.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 6));
+        return label;
     }
 
     private void styleTable() {
@@ -434,10 +484,128 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
     }
 
     private void refreshStats() {
-        captureState.setText("(" + (Config.CAPTURE_ENABLED ? "ON" : "OFF") + ")  "
+        captureState.setText("(" + (Config.CAPTURE_ENABLED ? "ON" : "OFF") + ")   "
                 + Stats.captured() + " captured");
-        injectState.setText("(" + (Config.AUTO_REPLACE_ENABLED ? "ON" : "OFF") + ")  "
+        injectState.setText("(" + (Config.AUTO_REPLACE_ENABLED ? "ON" : "OFF") + ")   "
                 + Stats.injected() + " injected");
+    }
+
+    // ------------------------------------------------------------ the toggle
+
+    /**
+     * An on/off switch for a whole feature.
+     *
+     * Painted rather than a checkbox because these two decide whether the
+     * extension does anything at all, and a switch shows that at a glance.
+     * Every colour comes from the look and feel, so it follows Burp's theme.
+     */
+    private static class Toggle extends JComponent {
+        private static final int WIDTH = 34;
+        private static final int HEIGHT = 18;
+        private static final int PAD = 3;
+
+        private final List<ActionListener> listeners = new ArrayList<ActionListener>();
+        private boolean selected;
+        private boolean hover;
+
+        Toggle(boolean selected) {
+            this.selected = selected;
+            setOpaque(false);
+            setFocusable(true);
+            setCursor(new Cursor(Cursor.HAND_CURSOR));
+            Dimension size = new Dimension(WIDTH, HEIGHT);
+            setPreferredSize(size);
+            setMinimumSize(size);
+            setMaximumSize(size);
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    if (isEnabled()) {
+                        requestFocusInWindow();
+                        toggle();
+                    }
+                }
+
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    hover = true;
+                    repaint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    hover = false;
+                    repaint();
+                }
+            });
+            getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "toggle");
+            getActionMap().put("toggle", new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    if (isEnabled()) {
+                        toggle();
+                    }
+                }
+            });
+        }
+
+        private void toggle() {
+            selected = !selected;
+            repaint();
+            ActionEvent event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "toggle");
+            for (ActionListener listener : new ArrayList<ActionListener>(listeners)) {
+                listener.actionPerformed(event);
+            }
+        }
+
+        void addActionListener(ActionListener listener) {
+            listeners.add(listener);
+        }
+
+        boolean isSelected() {
+            return selected;
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            Color ink = colour("Label.foreground", Color.DARK_GRAY);
+            Color paper = colour("Panel.background", Color.WHITE);
+            Color off = blend(ink, paper, 0.55f);
+
+            if (selected) {
+                g2.setColor(isEnabled() ? (hover ? blend(ink, paper, 0.15f) : ink) : off);
+                g2.fillRoundRect(0, 0, WIDTH, HEIGHT, HEIGHT, HEIGHT);
+                g2.setColor(paper);
+                g2.fillOval(WIDTH - HEIGHT + PAD, PAD, HEIGHT - PAD * 2, HEIGHT - PAD * 2);
+            } else {
+                g2.setColor(paper);
+                g2.fillRoundRect(0, 0, WIDTH, HEIGHT, HEIGHT, HEIGHT);
+                g2.setColor(isEnabled() ? (hover ? ink : off) : blend(off, paper, 0.5f));
+                g2.drawRoundRect(0, 0, WIDTH - 1, HEIGHT - 1, HEIGHT, HEIGHT);
+                g2.fillOval(PAD, PAD, HEIGHT - PAD * 2, HEIGHT - PAD * 2);
+            }
+
+            if (isFocusOwner()) {
+                g2.setColor(ink);
+                g2.drawRoundRect(-2, -2, WIDTH + 3, HEIGHT + 3, HEIGHT + 4, HEIGHT + 4);
+            }
+            g2.dispose();
+        }
+
+        private static Color colour(String key, Color fallback) {
+            Color value = UIManager.getColor(key);
+            return value == null ? fallback : value;
+        }
+
+        private static Color blend(Color a, Color b, float weightOfB) {
+            float w = Math.max(0f, Math.min(1f, weightOfB));
+            return new Color(Math.round(a.getRed() * (1 - w) + b.getRed() * w),
+                    Math.round(a.getGreen() * (1 - w) + b.getGreen() * w),
+                    Math.round(a.getBlue() * (1 - w) + b.getBlue() * w));
+        }
     }
 
     // -------------------------------------------------------------- controls
@@ -457,8 +625,15 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
     private static class Group extends JPanel {
         Group(String title) {
             setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
-            setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createTitledBorder(title),
+            TitledBorder heading = BorderFactory.createTitledBorder(title);
+            // Pin the title to ordinary label ink rather than trusting the
+            // look and feel's own title colour, which is not guaranteed to be
+            // legible against the panel in every theme.
+            Color ink = UIManager.getColor("Label.foreground");
+            if (ink != null) {
+                heading.setTitleColor(ink);
+            }
+            setBorder(BorderFactory.createCompoundBorder(heading,
                     BorderFactory.createEmptyBorder(4, 4, 4, 4)));
             setAlignmentX(Component.LEFT_ALIGNMENT);
         }
@@ -495,18 +670,10 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         return panel;
     }
 
-    /**
-     * Pins a component to the left margin. BorderLayout.WEST hands it exactly
-     * its preferred width at x=0, which a stretched component in a vertical
-     * BoxLayout does not reliably do.
-     */
     private static JComponent leftAligned(JComponent component) {
         JPanel row = new JPanel(new BorderLayout()) {
             @Override
             public Dimension getMaximumSize() {
-                // Asked for on every layout pass rather than captured once, so
-                // a wrapped label that turns out taller than first measured is
-                // not clipped against a stale height.
                 return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
             }
         };
@@ -515,24 +682,56 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         return row;
     }
 
-    /** A wrapped line of explanatory text inside a group. */
+    /**
+     * A paragraph of explanation. Wrapped here into separate labels rather than
+     * handed to Swing as HTML, because Burp disables the HTML renderer and the
+     * markup would be shown to the user verbatim.
+     */
     private static JComponent note(String text) {
-        JLabel label = new JLabel("<html><body style='width:820px'>" + text + "</body></html>");
-        label.setBorder(BorderFactory.createEmptyBorder(0, 2, 4, 2));
-        // Wrapped in a left-flowing row: a bare label stretches to the width of
-        // the group and a short single line then floats away from the margin.
-        return leftAligned(label);
+        JPanel lines = new JPanel();
+        lines.setLayout(new BoxLayout(lines, BoxLayout.Y_AXIS));
+        lines.setAlignmentX(Component.LEFT_ALIGNMENT);
+        lines.setBorder(BorderFactory.createEmptyBorder(0, 2, 4, 2));
+        for (String line : wrap(text, NOTE_WRAP)) {
+            JLabel label = new JLabel(line);
+            label.setAlignmentX(Component.LEFT_ALIGNMENT);
+            lines.add(label);
+        }
+        return leftAligned(lines);
     }
 
-    private static JButton button(String text, java.awt.event.ActionListener action) {
+    /** Greedy word wrap at a character budget. */
+    private static List<String> wrap(String text, int width) {
+        List<String> lines = new ArrayList<String>();
+        StringBuilder line = new StringBuilder();
+        for (String word : text.split(" ")) {
+            if (line.length() > 0 && line.length() + 1 + word.length() > width) {
+                lines.add(line.toString());
+                line.setLength(0);
+            }
+            if (line.length() > 0) {
+                line.append(' ');
+            }
+            line.append(word);
+        }
+        if (line.length() > 0) {
+            lines.add(line.toString());
+        }
+        return lines;
+    }
+
+    private static JButton button(String text, ActionListener action) {
         JButton button = new JButton(text);
         button.addActionListener(action);
         return button;
     }
 
-    /** A clickable label that opens a URL in the browser. */
+    /** A clickable label that opens a URL. Underlined, since it cannot be HTML. */
     private static JLabel link(String text, String url) {
-        JLabel label = new JLabel("<html><a href=''>" + text + "</a></html>");
+        JLabel label = new JLabel(text);
+        Map<TextAttribute, Object> attributes = new HashMap<TextAttribute, Object>(label.getFont().getAttributes());
+        attributes.put(TextAttribute.UNDERLINE, TextAttribute.UNDERLINE_ON);
+        label.setFont(label.getFont().deriveFont(attributes));
         label.setCursor(new Cursor(Cursor.HAND_CURSOR));
         label.setToolTipText(url);
         label.addMouseListener(new MouseAdapter() {
@@ -557,7 +756,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         c.anchor = GridBagConstraints.WEST;
 
         JCheckBox box = new JCheckBox(label, checked);
-        JTextField field = field(value, setter, isRegex, label);
+        JTextField field = field(value, setter, isRegex, label, 42);
 
         box.addActionListener((ActionEvent e) -> {
             onToggle.accept(box.isSelected());
@@ -573,14 +772,17 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         grid.add(box, c);
 
         c.gridx = 1;
-        c.weightx = 1;
-        c.fill = GridBagConstraints.HORIZONTAL;
         grid.add(field, c);
 
         c.gridx = 2;
-        c.weightx = 0;
-        c.fill = GridBagConstraints.NONE;
         grid.add(new JLabel(hint), c);
+
+        // Soaks up the leftover width so the fields keep a readable size
+        // instead of being stretched the whole width of the tab.
+        c.gridx = 3;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        grid.add(Box.createHorizontalGlue(), c);
     }
 
     private void addReplaceHeader(JPanel grid) {
@@ -591,7 +793,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         c.anchor = GridBagConstraints.WEST;
         for (int i = 0; i < titles.length; i++) {
             c.gridx = i;
-            c.weightx = (i == 1 || i == 2 || i == 5) ? 1 : 0;
+            c.weightx = i == 5 ? 1 : 0;
             c.fill = GridBagConstraints.HORIZONTAL;
             grid.add(new JLabel(titles[i]), c);
         }
@@ -614,15 +816,14 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         c.anchor = GridBagConstraints.WEST;
 
         JCheckBox box = new JCheckBox(label, checked);
-        JTextField matchField = field(matchValue, matchSetter, matchIsRegex, label);
+        JTextField matchField = field(matchValue, matchSetter, matchIsRegex, label, 26);
         matchField.setToolTipText(matchIsRegex ? "RegEx matched against the request body"
                 : "The header prefix to look for, ex: Authorization: Bearer");
-        JTextField withField = withValue == null ? null : field(withValue, withSetter, false, label);
+        JTextField withField = withValue == null ? null : field(withValue, withSetter, false, label, 22);
         if (withField != null) {
             withField.setToolTipText("The literal text put back in front of the token");
         }
-        JTextField formatField = field(formatValue, formatSetter, false, label);
-        formatField.setColumns(5);
+        JTextField formatField = field(formatValue, formatSetter, false, label, 5);
         formatField.setToolTipText("First %s is the name, second %s is the token");
 
         JCheckBox addBox = addChecked == null ? null : new JCheckBox("Add if missing", addChecked);
@@ -683,16 +884,12 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         grid.add(box, c);
 
         c.gridx = 1;
-        c.weightx = 1;
-        c.fill = GridBagConstraints.HORIZONTAL;
         grid.add(matchField, c);
 
         c.gridx = 2;
         grid.add(withField == null ? new JLabel("-") : withField, c);
 
         c.gridx = 3;
-        c.weightx = 0;
-        c.fill = GridBagConstraints.NONE;
         grid.add(formatField, c);
 
         c.gridx = 4;
@@ -752,8 +949,8 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         }
     }
 
-    private JTextField field(String value, Consumer<String> setter, boolean isRegex, String label) {
-        JTextField field = new JTextField(value, 16);
+    private JTextField field(String value, Consumer<String> setter, boolean isRegex, String label, int columns) {
+        JTextField field = new JTextField(value, columns);
         final Border normal = field.getBorder();
         final Border invalid = BorderFactory.createLineBorder(Color.RED);
         onChange(field, text -> {
