@@ -38,6 +38,7 @@ import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -178,15 +179,30 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         JPanel header = new JPanel();
         header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
 
-        JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        JPanel titleLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
         JLabel name = new JLabel("XsessionHandler " + Config.EXT_VERSION);
         name.setFont(name.getFont().deriveFont(Font.BOLD));
-        titleRow.add(name);
-        titleRow.add(new JLabel("- token capture and injection, straight from the HTTP listener."));
-        titleRow.add(Box.createHorizontalStrut(8));
-        titleRow.add(new JLabel("Built by"));
-        titleRow.add(link("@" + Config.AUTHOR_HANDLE, Config.AUTHOR_LINK));
+        titleLeft.add(name);
+        titleLeft.add(new JLabel("- token capture and injection, straight from the HTTP listener."));
+
+        // The one deliberately loud thing in the tab: the author credit, set
+        // apart on the right in green so it is the first colour the eye lands
+        // on without competing with any control.
+        JPanel titleRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 2));
+        JLabel builtBy = new JLabel("Built by");
+        builtBy.setForeground(credit());
+        JLabel author = link("Kamal  (@" + Config.AUTHOR_HANDLE + ")", Config.AUTHOR_LINK);
+        author.setFont(author.getFont().deriveFont(Font.BOLD, author.getFont().getSize2D() + 1f));
+        author.setForeground(credit());
+        titleRight.add(builtBy);
+        titleRight.add(author);
+        titleRight.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
+
+        JPanel titleRow = new JPanel(new BorderLayout());
+        titleRow.add(titleLeft, BorderLayout.WEST);
+        titleRow.add(titleRight, BorderLayout.EAST);
         titleRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        titleRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, titleRight.getPreferredSize().height + 6));
 
         captureToggle.addActionListener(e -> {
             boolean on = captureToggle.isSelected();
@@ -199,6 +215,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             }
             refreshStats();
             say("Capture " + (on ? "enabled - responses are being read." : "paused - no tokens will be read."), !on);
+            Settings.scheduleSave();
         });
         injectToggle.addActionListener(e -> {
             boolean on = injectToggle.isSelected();
@@ -212,6 +229,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             refreshStats();
             say("Inject " + (on ? "enabled - outgoing requests are rewritten." : "paused - requests go out as-is."),
                     !on);
+            Settings.scheduleSave();
         });
         captureToggle.setToolTipText("Read tokens out of responses");
         injectToggle.setToolTipText("Rewrite outgoing requests with the tokens");
@@ -230,6 +248,17 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         header.add(switchRow);
         header.add(Box.createVerticalStrut(4));
         return header;
+    }
+
+    /**
+     * The green used for the author credit, picked per theme so it clears the
+     * contrast bar on a dark panel as well as a light one.
+     */
+    private static Color credit() {
+        Color background = UIManager.getColor("Panel.background");
+        boolean dark = background != null
+                && (0.299 * background.getRed() + 0.587 * background.getGreen() + 0.114 * background.getBlue()) < 128;
+        return dark ? new Color(0x5CD07B) : new Color(0x1B7F3B);
     }
 
     private static JLabel boldLabel(String text) {
@@ -256,6 +285,20 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         JPanel extract = group("What to pull out");
         extract.add(note("Group 1 of each RegEx is stored as the token. "
                 + "Leave one unticked if your app has no such token."));
+
+        JComboBox<Config.SearchIn> searchIn = new JComboBox<Config.SearchIn>(Config.SearchIn.values());
+        searchIn.setSelectedItem(Config.CAPTURE_SEARCH_IN);
+        searchIn.setToolTipText("A token can arrive in Set-Cookie or a custom header as easily as in the body");
+        searchIn.addActionListener(e -> {
+            Config.CAPTURE_SEARCH_IN = (Config.SearchIn) searchIn.getSelectedItem();
+            changed("Tokens are now read from the " + Config.CAPTURE_SEARCH_IN.label.toLowerCase() + ".");
+        });
+        JPanel searchRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        searchRow.add(new JLabel("Look for the token in:"));
+        searchRow.add(searchIn);
+        extract.add(leftAligned(searchRow));
+        captureSync.add(() -> searchIn.setEnabled(true));
+
         JPanel extractGrid = grid();
         row = 0;
         addSetting(extractGrid, row++, captureSync, "TOKEN-1", Config.LISTEN_4_ACCESS_TOKEN,
@@ -266,31 +309,23 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 v -> Config.VALUE_READ_REFRESH_TOKEN_REGEX = v, true, "refresh / CSRF token");
         extract.add(extractGrid);
 
-        JPanel scope = group("Testing more than one app at once (optional)");
-        scope.add(note("Two apps that both return access_token would otherwise share one slot and keep overwriting "
-                + "each other. To keep them apart, add a header to each login request naming the path that token "
-                + "belongs to - for example \"Shp-Path: /appA/\" - and the token is filed under /appA/ instead of /. "
-                + "Requests to /appA/... then get that token back. You add the header yourself, with a Proxy "
-                + "match/replace rule or by hand."));
-        JPanel scopeGrid = grid();
-        addSetting(scopeGrid, 0, captureSync, "Read the scope from this request header", Config.CHECK_REQ_PATH,
-                v -> Config.CHECK_REQ_PATH = v, Config.VALUE_REQ_PATH_HEADER,
-                v -> Config.VALUE_REQ_PATH_HEADER = v, true, "group 1 becomes the scope");
-        scope.add(scopeGrid);
+        // The per-application scope feature stays live in the listener - send a
+        // request header matching Config.VALUE_REQ_PATH_HEADER and the token is
+        // filed under that scope - but it earns no space here, because it only
+        // matters when two applications are being tested at once.
 
         JPanel debug = group("Not seeing your token?");
         JCheckBox rejectLogs = new JCheckBox("Log every response that was skipped, and say why",
                 Config.CHECK_PRINT_REJECT_LOGS_1A_1B);
         rejectLogs.addActionListener((ActionEvent e) -> {
             Config.CHECK_PRINT_REJECT_LOGS_1A_1B = rejectLogs.isSelected();
-            say("Skipped-response logging " + (rejectLogs.isSelected()
-                    ? "on - check the Extensions output tab." : "off."), false);
+            changed("Skipped-response logging " + (rejectLogs.isSelected()
+                    ? "on - check the Extensions output tab." : "off."));
         });
         debug.add(leftAligned(rejectLogs));
 
         captureBody.add(filters);
         captureBody.add(extract);
-        captureBody.add(scope);
         captureBody.add(debug);
         setEnabledDeep(captureBody, Config.CAPTURE_ENABLED);
         return captureBody;
@@ -310,7 +345,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             JCheckBox box = new JCheckBox(tool.label, tool.enabled);
             box.addActionListener((ActionEvent e) -> {
                 tool.enabled = box.isSelected();
-                say("Injection for " + tool.label + " " + (tool.enabled ? "on." : "off."), false);
+                changed("Injection for " + tool.label + " " + (tool.enabled ? "on." : "off."));
             });
             boxes[i] = box;
             toolChecks.add(box);
@@ -327,6 +362,27 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         toolRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, quick.getPreferredSize().height + 8));
         tools.add(toolRow);
 
+        JPanel skip = group("Leave these requests alone");
+        skip.add(note("Anything matching here is sent exactly as you wrote it. Useful for logout and login, "
+                + "where replaying a token either ends the session or overwrites the credentials of the very "
+                + "request that mints the next one."));
+        JPanel skipGrid = grid();
+        addSetting(skipGrid, 0, injectSync, "Do not rewrite URLs matching", Config.CHECK_INJECT_URL_BLACKLIST,
+                v -> Config.CHECK_INJECT_URL_BLACKLIST = v, Config.VALUE_INJECT_URL_BLACKLIST,
+                v -> Config.VALUE_INJECT_URL_BLACKLIST = v, true, "RegEx, tested against the whole URL");
+        skip.add(skipGrid);
+
+        JCheckBox inScope = new JCheckBox("Only rewrite URLs that are in Burp's Target scope",
+                Config.INJECT_ONLY_IN_SCOPE);
+        inScope.setToolTipText("Everything outside the scope you set on the Target tab is sent untouched");
+        inScope.addActionListener((ActionEvent e) -> {
+            Config.INJECT_ONLY_IN_SCOPE = inScope.isSelected();
+            changed(inScope.isSelected()
+                    ? "Only in-scope requests will be rewritten."
+                    : "Requests are rewritten regardless of Target scope.");
+        });
+        skip.add(leftAligned(inScope));
+
         JPanel token1 = group("TOKEN-1 goes here (JWT / access token)");
         JPanel grid1 = grid();
         addReplaceHeader(grid1);
@@ -335,12 +391,10 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 Config.REPLACE_STRUCTURE_TOKEN1_HEAD_1, v -> Config.REPLACE_STRUCTURE_TOKEN1_HEAD_1 = v,
                 Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_1,
                 v -> Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_1 = v, "TOKEN-1");
-        addReplace(grid1, 2, "A second header", Config.CHECK_TOKEN1_HEADER_2, v -> Config.CHECK_TOKEN1_HEADER_2 = v,
-                Config.VAL_JWT_HEADER_NAME_2, v -> Config.VAL_JWT_HEADER_NAME_2 = v, false, null, null,
-                Config.REPLACE_STRUCTURE_TOKEN1_HEAD_2, v -> Config.REPLACE_STRUCTURE_TOKEN1_HEAD_2 = v,
-                Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_2,
-                v -> Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_2 = v, "TOKEN-1");
-        addReplace(grid1, 3, "A body parameter", Config.CHECK_TOKEN1_BODY, v -> Config.CHECK_TOKEN1_BODY = v,
+        // A second header position was dropped: one header plus a body
+        // parameter covers what applications actually do, and anything more
+        // exotic is a one-line edit in Repeater.
+        addReplace(grid1, 2, "A body parameter", Config.CHECK_TOKEN1_BODY, v -> Config.CHECK_TOKEN1_BODY = v,
                 Config.VAL_JWT_BODY_NAME_1, v -> Config.VAL_JWT_BODY_NAME_1 = v, true,
                 Config.VAL_JWT_BODY_NAME_2, v -> Config.VAL_JWT_BODY_NAME_2 = v,
                 Config.REPLACE_STRUCTURE_TOKEN1_BODY, v -> Config.REPLACE_STRUCTURE_TOKEN1_BODY = v, null, null,
@@ -363,6 +417,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         token2.add(grid2);
 
         injectBody.add(tools);
+        injectBody.add(skip);
         injectBody.add(token1);
         injectBody.add(token2);
         setEnabledDeep(injectBody, Config.AUTO_REPLACE_ENABLED);
@@ -375,6 +430,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             Config.TOOLS[i].enabled = on;
         }
         say(on ? "Injecting into every Burp tool." : "Injection disabled for every tool.", !on);
+        Settings.scheduleSave();
     }
 
     // ------------------------------------------------------------ tokens tab
@@ -761,7 +817,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         box.addActionListener((ActionEvent e) -> {
             onToggle.accept(box.isSelected());
             field.setEnabled(box.isSelected());
-            say(label + " " + (box.isSelected() ? "on." : "off."), false);
+            changed(label + " " + (box.isSelected() ? "on." : "off."));
         });
         field.setEnabled(checked);
         syncs.add(() -> field.setEnabled(box.isSelected()));
@@ -868,12 +924,12 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             boolean on = box.isSelected();
             onToggle.accept(on);
             sync.run();
-            say(label + " " + (on ? "will be rewritten with " + tokenName + "." : "will be left alone."), false);
+            changed(label + " " + (on ? "will be rewritten with " + tokenName + "." : "will be left alone."));
         });
         if (addBox != null) {
             addBox.addActionListener((ActionEvent e) -> {
                 onAddToggle.accept(addBox.isSelected());
-                say("'Add if missing' for " + label + " " + (addBox.isSelected() ? "on." : "off."), false);
+                changed("'Add if missing' for " + label + " " + (addBox.isSelected() ? "on." : "off."));
             });
         }
         sync.run();
@@ -976,7 +1032,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             }
             field.setBorder(normal);
             setter.accept(text);
-            say(label + " set to " + text, false);
+            changed(label + " set to " + text);
         });
         return field;
     }
@@ -1008,6 +1064,16 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             say(message, false);
             refreshStats();
         });
+    }
+
+    /**
+     * A setting was changed: report it and queue it to be remembered. Every
+     * control that writes to Config goes through here rather than say(), so
+     * nothing can be changed without also being persisted.
+     */
+    private void changed(String message) {
+        say(message, false);
+        Settings.scheduleSave();
     }
 
     /** Last thing that happened. Only a problem gets colour. */

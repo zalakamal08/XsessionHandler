@@ -62,7 +62,26 @@ public class MyHttpListener implements IHttpListener {
             return;
         }
 
-        String url = helpers.analyzeRequest(currentMessage).getUrl().toString();
+        java.net.URL target = helpers.analyzeRequest(currentMessage).getUrl();
+        String url = target.toString();
+
+        if (Config.INJECT_ONLY_IN_SCOPE && !callbacks.isInScope(target)) {
+            if (Config.CHECK_PRINT_REJECT_LOGS_1A_1B) {
+                Log.print("[" + Log.now() + "] - NOT REWRITTEN: outside Burp's Target scope - ["
+                        + Config.toolName(toolFlag) + "] [URL:" + url + "]");
+            }
+            return;
+        }
+
+        if (Config.CHECK_INJECT_URL_BLACKLIST && find(Config.VALUE_INJECT_URL_BLACKLIST, url)) {
+            if (Config.CHECK_PRINT_REJECT_LOGS_1A_1B) {
+                Log.print("[" + Log.now() + "] - NOT REWRITTEN: URL matches the skip list '"
+                        + Config.VALUE_INJECT_URL_BLACKLIST + "' - [" + Config.toolName(toolFlag) + "] [URL:" + url
+                        + "]");
+            }
+            return;
+        }
+
         TokenReplacer.Result result = TokenReplacer.apply(helpers, currentMessage.getRequest(), url);
         if (!result.changed()) {
             return;
@@ -132,8 +151,13 @@ public class MyHttpListener implements IHttpListener {
         String body = helpers
                 .bytesToString(Arrays.copyOfRange(responseBytes, response.getBodyOffset(), responseBytes.length));
 
-        String accessToken = Config.LISTEN_4_ACCESS_TOKEN ? group1(Config.VALUE_READ_JWT_REGEX, body) : null;
-        String refreshToken = Config.LISTEN_4_REFRESH_TOKEN ? group1(Config.VALUE_READ_REFRESH_TOKEN_REGEX, body)
+        // A token is as likely to arrive in Set-Cookie or a custom header as in
+        // the body, so what the RegEx is run against is the user's choice.
+        String haystack = searchable(headers, body);
+
+        String accessToken = Config.LISTEN_4_ACCESS_TOKEN ? group1(Config.VALUE_READ_JWT_REGEX, haystack) : null;
+        String refreshToken = Config.LISTEN_4_REFRESH_TOKEN
+                ? group1(Config.VALUE_READ_REFRESH_TOKEN_REGEX, haystack)
                 : null;
 
         if (accessToken == null && refreshToken == null) {
@@ -182,6 +206,22 @@ public class MyHttpListener implements IHttpListener {
     }
 
     // ----------------------------------------------------------------- utils
+
+    /** The text a token RegEx is run against, per the user's chosen scope. */
+    private static String searchable(List<String> headers, String body) {
+        Config.SearchIn where = Config.CAPTURE_SEARCH_IN;
+        if (where == Config.SearchIn.BODY) {
+            return body;
+        }
+        StringBuilder joined = new StringBuilder();
+        for (String header : headers) {
+            joined.append(header).append("\r\n");
+        }
+        if (where == Config.SearchIn.HEADERS) {
+            return joined.toString();
+        }
+        return joined.append("\r\n").append(body).toString();
+    }
 
     private static Pattern compile(String regex) {
         try {

@@ -17,6 +17,32 @@ public final class Config {
     public static final String VAL_REFRESH_TOKEN_COOKIE_NAME = "TOKEN-2";
 
     // ---------------------------------------------------------------- capture
+
+    /** Which part of a response a token RegEx is run against. */
+    public enum SearchIn {
+        BODY("Response body"),
+        HEADERS("Response headers"),
+        BOTH("Headers and body");
+
+        public final String label;
+
+        SearchIn(String label) {
+            this.label = label;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    /**
+     * Defaults to both: a token is just as likely to arrive in a Set-Cookie or
+     * a custom response header as in the body, and a body-shaped RegEx cannot
+     * accidentally match a header anyway.
+     */
+    public static SearchIn CAPTURE_SEARCH_IN = SearchIn.BOTH;
+
     public static boolean CAPTURE_ENABLED = true;
     public static boolean CHECK_PRINT_REJECT_LOGS_1A_1B = false;
     public static boolean CHECK_REQ_URL_REGEX = true;
@@ -33,6 +59,18 @@ public final class Config {
     // ---------------------------------------------------------------- replace
     /** Master switch for rewriting outgoing requests before they are sent. */
     public static boolean AUTO_REPLACE_ENABLED = true;
+
+    /**
+     * Requests whose URL matches are left exactly as the user sent them. Logout
+     * and login are the usual cases - replaying a fresh token into a logout, or
+     * overwriting the credentials of the very request that mints the next
+     * token, both defeat the point.
+     */
+    public static boolean CHECK_INJECT_URL_BLACKLIST = false;
+    public static String VALUE_INJECT_URL_BLACKLIST = "/logout|/signout|/login";
+
+    /** When on, only URLs inside Burp's Target scope are rewritten. */
+    public static boolean INJECT_ONLY_IN_SCOPE = false;
 
     public static String REPLACE_STRUCTURE_TOKEN1_HEAD_1 = "%s %s";
     public static String REPLACE_STRUCTURE_TOKEN1_HEAD_2 = "%s %s";

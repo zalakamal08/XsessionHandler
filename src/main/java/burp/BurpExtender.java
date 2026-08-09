@@ -11,6 +11,11 @@ public class BurpExtender implements IBurpExtender {
         Log.init(callbacks);
         callbacks.setExtensionName("Session Handler Plus (SH+)");
 
+        // Restore before the tab is built, so the controls come up showing
+        // what the user last set rather than the defaults.
+        Settings.init(callbacks);
+        Settings.load();
+
         httpListener = new MyHttpListener(callbacks);
         tab = new MyTab(callbacks, httpListener);
 
