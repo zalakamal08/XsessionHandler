@@ -3,6 +3,7 @@ target/
 .idea/
 *.iml
 .vscode/
+docs/
 
 # Agent instructions - never publish these
 CLAUDE.md
