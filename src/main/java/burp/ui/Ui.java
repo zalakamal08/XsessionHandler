@@ -10,6 +10,7 @@ import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.font.TextAttribute;
@@ -20,6 +21,7 @@ import java.util.Map;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -61,6 +63,38 @@ public final class Ui {
         box.setForeground(Theme.foreground());
         box.setFocusPainted(false);
         return box;
+    }
+
+    /** A solid, accent-colored button for primary actions (Copy / Remove / Clear, etc). */
+    public static JButton filledButton(String text, ActionListener action) {
+        JButton button = new JButton(text) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                Color fill;
+                if (!isEnabled()) {
+                    fill = Theme.mix(Theme.accent(), Theme.background(), 0.6f);
+                } else if (getModel().isRollover()) {
+                    fill = Theme.accent().brighter();
+                } else {
+                    fill = Theme.accent();
+                }
+                g2.setColor(fill);
+                g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 8, 8);
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        button.setFont(Theme.bold());
+        button.setForeground(Theme.onAccent());
+        button.setFocusPainted(false);
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        button.setBorder(BorderFactory.createEmptyBorder(6, 14, 6, 14));
+        button.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        button.addActionListener(action);
+        return button;
     }
 
     /** A blue clickable label that opens a URL. */

@@ -38,7 +38,7 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
 import javax.swing.table.TableCellRenderer;
 
-import burp.ui.Card;
+import burp.ui.Section;
 import burp.ui.SwitchButton;
 import burp.ui.Theme;
 import burp.ui.Ui;
@@ -213,7 +213,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
     // ----------------------------------------------------------- capture tab
 
     private JComponent buildCaptureTab() {
-        Card filters = new Card("1", "Which responses to read",
+        Section filters = new Section("1", "Which responses to read",
                 "A response is only inspected when every ticked check passes.");
         JPanel filterGrid = grid();
         int row = 0;
@@ -225,7 +225,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 v -> Config.VALUE_RESP_CONTENT_TYPE_HEADER = v, false, "plain text, not a RegEx");
         filters.add(filterGrid);
 
-        Card extract = new Card("2", "What to pull out",
+        Section extract = new Section("2", "What to pull out",
                 "Group 1 of each RegEx is stored as the token. Leave one unticked if your app has no such token.");
         JPanel extractGrid = grid();
         row = 0;
@@ -237,7 +237,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 v -> Config.VALUE_READ_REFRESH_TOKEN_REGEX = v, true, "refresh / CSRF token");
         extract.add(extractGrid);
 
-        Card scope = new Card("3", "Testing more than one app at once?",
+        Section scope = new Section("3", "Testing more than one app at once?",
                 "Optional. Skip this if you are working on a single application.");
         scope.add(Ui.muted("<html><body style='width:640px'>"
                 + "Two apps that both return <code>access_token</code> would otherwise share one slot and keep "
@@ -253,7 +253,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 v -> Config.VALUE_REQ_PATH_HEADER = v, true, "group 1 becomes the scope");
         scope.add(scopeGrid);
 
-        Card debug = new Card("4", "Not seeing your token?", "Turn this on to find out which check is rejecting it.");
+        Section debug = new Section("4", "Not seeing your token?", "Turn this on to find out which check is rejecting it.");
         JCheckBox rejectLogs = Ui.checkBox("Log every response that was skipped, and say why",
                 Config.CHECK_PRINT_REJECT_LOGS_1A_1B);
         rejectLogs.addActionListener((ActionEvent e) -> {
@@ -278,7 +278,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
     // ------------------------------------------------------------ inject tab
 
     private JComponent buildInjectTab() {
-        Card tools = new Card("1", "Which Burp tools to rewrite",
+        Section tools = new Section("1", "Which Burp tools to rewrite",
                 "Extender is off by default so your own token-fetch traffic is not rewritten with a stale value.");
         JPanel toolRow = Ui.row(10);
         final JCheckBox[] boxes = new JCheckBox[Config.TOOLS.length];
@@ -299,7 +299,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         quick.add(clickable("Select none", () -> setAllTools(boxes, false)));
         tools.add(quick);
 
-        Card token1 = new Card("2", "TOKEN-1 goes here", "JWT / access token. Tick every position your app uses.");
+        Section token1 = new Section("2", "TOKEN-1 goes here", "JWT / access token. Tick every position your app uses.");
         JPanel grid1 = grid();
         addReplaceHeader(grid1);
         addReplace(grid1, 1, "Request header", Config.CHECK_TOKEN1_HEADER_1, v -> Config.CHECK_TOKEN1_HEADER_1 = v,
@@ -319,7 +319,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 "TOKEN-1");
         token1.add(grid1);
 
-        Card token2 = new Card("3", "TOKEN-2 goes here", "Refresh / CSRF token.");
+        Section token2 = new Section("3", "TOKEN-2 goes here", "Refresh / CSRF token.");
         JPanel grid2 = grid();
         addReplaceHeader(grid2);
         addReplace(grid2, 1, "Request header", Config.CHECK_TOKEN2_HEADER, v -> Config.CHECK_TOKEN2_HEADER = v,
@@ -705,11 +705,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
     }
 
     private JButton button(String text, java.awt.event.ActionListener action) {
-        JButton button = new JButton(text);
-        button.setFont(Theme.base());
-        button.setFocusPainted(false);
-        button.addActionListener(action);
-        return button;
+        return Ui.filledButton(text, action);
     }
 
     /** A link-styled label that runs an action instead of opening a URL. */

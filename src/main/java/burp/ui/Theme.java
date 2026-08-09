@@ -54,6 +54,16 @@ public final class Theme {
         return isDark() ? new Color(0x58A6FF) : new Color(0x0969DA);
     }
 
+    /** A low-alpha tint of the accent color, for soft fills (badges, rules' hover state). */
+    public static Color accentSoft() {
+        return alpha(accent(), isDark() ? 60 : 32);
+    }
+
+    /** Near-white text/icon color for use on top of a solid accent() fill. */
+    public static Color onAccent() {
+        return Color.WHITE;
+    }
+
     public static Color success() {
         return isDark() ? new Color(0x3FB950) : new Color(0x1A7F37);
     }
@@ -67,7 +77,8 @@ public final class Theme {
     }
 
     public static Font base() {
-        return orDefault(UIManager.getFont("Label.font"), new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+        Font uiFont = orDefault(UIManager.getFont("Label.font"), new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+        return uiFont.deriveFont(uiFont.getSize2D() + 1f);
     }
 
     public static Font bold() {
@@ -79,11 +90,11 @@ public final class Theme {
     }
 
     public static Font heading() {
-        return base().deriveFont(Font.BOLD, base().getSize2D() + 1f);
+        return base().deriveFont(Font.BOLD, base().getSize2D() + 4f);
     }
 
     public static Font small() {
-        return base().deriveFont(Math.max(9f, base().getSize2D() - 1f));
+        return base().deriveFont(Math.max(10f, base().getSize2D() - 1f));
     }
 
     public static Font mono() {
