@@ -2,106 +2,225 @@ package burp.ui;
 
 import java.awt.Color;
 import java.awt.Font;
+import java.awt.GraphicsEnvironment;
+import java.awt.font.TextAttribute;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 import javax.swing.UIManager;
 
 /**
- * Colours and fonts derived from whatever look and feel Burp is running, so
- * the tab sits correctly in both the light and the dark theme instead of
- * hard-coding black on white.
+ * The single source of truth for colour, type and metrics.
+ *
+ * Neutrals are derived from whatever look and feel Burp is running so the tab
+ * always sits correctly inside the host window, light or dark. Everything on
+ * top of the neutrals - the accent, the type scale, the spacing rhythm, the
+ * corner radii - is our own, so the tab reads as one designed surface rather
+ * than as default Swing.
+ *
+ * Elevation runs canvas -> surface -> raised, with well() reserved for the
+ * inside of an input. Text runs text -> dim -> faint. Nothing outside this
+ * class should mix its own colours.
  */
 public final class Theme {
 
     private Theme() {
     }
 
-    public static Color background() {
-        return orDefault(UIManager.getColor("Panel.background"), new Color(0xF2F2F2));
+    // ------------------------------------------------------------- elevation
+
+    /** The base plane: the page behind everything. */
+    public static Color canvas() {
+        return orDefault(UIManager.getColor("Panel.background"), new Color(0xF3F4F6));
     }
 
-    public static Color foreground() {
-        return orDefault(UIManager.getColor("Label.foreground"), new Color(0x1F1F1F));
-    }
-
-    /** True when the host look and feel is a dark one. */
-    public static boolean isDark() {
-        return luminance(background()) < 0.5f;
-    }
-
-    /** Panel fill for a card, a touch lifted from the window background. */
-    public static Color card() {
-        Color bg = background();
-        return isDark() ? lighten(bg, 0.06f) : lighten(bg, 0.55f);
-    }
-
-    /** Slightly stronger fill, for headers and table stripes. */
+    /** One step up from the canvas: rail, header strip, status bar. */
     public static Color surface() {
-        Color bg = background();
-        return isDark() ? lighten(bg, 0.12f) : darken(bg, 0.03f);
+        Color base = canvas();
+        return isDark() ? lighten(base, 0.05f) : lighten(base, 0.60f);
     }
 
-    /** Hairline separators and component outlines. */
+    /** Two steps up: hovered rows, table stripes, chips. */
+    public static Color raised() {
+        Color base = canvas();
+        return isDark() ? lighten(base, 0.10f) : darken(base, 0.025f);
+    }
+
+    /** The inside of a text input - reads as recessed in both themes. */
+    public static Color well() {
+        Color base = canvas();
+        return isDark() ? darken(base, 0.22f) : lighten(base, 0.85f);
+    }
+
+    // ------------------------------------------------------------------ text
+
+    public static Color text() {
+        return orDefault(UIManager.getColor("Label.foreground"), new Color(0x111827));
+    }
+
+    /** Secondary copy: subtitles, helper notes, values in a quiet column. */
+    public static Color dim() {
+        return mix(text(), canvas(), 0.38f);
+    }
+
+    /** Tertiary copy: column captions, units, disabled-ish labels. */
+    public static Color faint() {
+        return mix(text(), canvas(), 0.58f);
+    }
+
+    // ----------------------------------------------------------------- lines
+
+    /** Hairline separators and resting input outlines. */
     public static Color line() {
-        return mix(foreground(), background(), 0.78f);
+        return mix(text(), canvas(), 0.80f);
     }
 
-    /** De-emphasised text: hints, units, secondary labels. */
-    public static Color muted() {
-        return mix(foreground(), background(), 0.42f);
+    /** A more assertive divider, for structural edges like the rail. */
+    public static Color lineStrong() {
+        return mix(text(), canvas(), 0.68f);
     }
 
+    // ---------------------------------------------------------------- accent
+
+    /**
+     * Terminal green - the "running" colour of a developer tool. Deliberately
+     * darker in light mode so body-size text on the canvas still clears the
+     * 4.5:1 contrast bar.
+     */
     public static Color accent() {
-        return isDark() ? new Color(0x58A6FF) : new Color(0x0969DA);
+        return isDark() ? new Color(0x22C55E) : new Color(0x15803D);
     }
 
-    /** A low-alpha tint of the accent color, for soft fills (badges, rules' hover state). */
+    /** A low-alpha wash of the accent, for chips, active nav and step marks. */
     public static Color accentSoft() {
-        return alpha(accent(), isDark() ? 60 : 32);
+        return alpha(accent(), isDark() ? 46 : 30);
     }
 
-    /** Near-white text/icon color for use on top of a solid accent() fill. */
+    /** Text/icon colour on top of a solid accent fill. */
     public static Color onAccent() {
-        return Color.WHITE;
+        return isDark() ? new Color(0x052E16) : Color.WHITE;
     }
 
-    public static Color success() {
-        return isDark() ? new Color(0x3FB950) : new Color(0x1A7F37);
+    // ----------------------------------------------------------------- state
+
+    public static Color ok() {
+        return accent();
+    }
+
+    public static Color warn() {
+        return isDark() ? new Color(0xF59E0B) : new Color(0xB45309);
     }
 
     public static Color danger() {
-        return isDark() ? new Color(0xF85149) : new Color(0xCF222E);
+        return isDark() ? new Color(0xF87171) : new Color(0xDC2626);
     }
 
-    public static Color warning() {
-        return isDark() ? new Color(0xD29922) : new Color(0x9A6700);
+    /** Neutral informational state - reads as "noted", not as "good" or "bad". */
+    public static Color info() {
+        return isDark() ? new Color(0x94A3B8) : new Color(0x475569);
     }
 
-    public static Font base() {
-        Font uiFont = orDefault(UIManager.getFont("Label.font"), new Font(Font.SANS_SERIF, Font.PLAIN, 12));
-        return uiFont.deriveFont(uiFont.getSize2D() + 1f);
+    // ------------------------------------------------------------------ type
+
+    /**
+     * Inter when the machine has it (the type pairing this UI was designed
+     * around), otherwise whatever Burp is already using, so we degrade into
+     * the host look rather than into something arbitrary.
+     */
+    private static final String FAMILY = firstAvailable("Inter", "Inter Display", "SF Pro Text",
+            "Segoe UI Variable Text", "Segoe UI", "Roboto");
+
+    private static float baseSize() {
+        Font host = orDefault(UIManager.getFont("Label.font"), new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+        return host.getSize2D() + 1f;
     }
 
-    public static Font bold() {
-        return base().deriveFont(Font.BOLD);
+    private static Font at(float size, int style) {
+        if (FAMILY != null) {
+            return new Font(FAMILY, style, 12).deriveFont(style, size);
+        }
+        Font host = orDefault(UIManager.getFont("Label.font"), new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+        return host.deriveFont(style, size);
     }
 
-    public static Font title() {
-        return base().deriveFont(Font.BOLD, base().getSize2D() + 3f);
+    /** Default body copy. */
+    public static Font body() {
+        return at(baseSize(), Font.PLAIN);
     }
 
-    public static Font heading() {
-        return base().deriveFont(Font.BOLD, base().getSize2D() + 4f);
+    /** Body copy carrying emphasis - control names, active nav. */
+    public static Font strong() {
+        return at(baseSize(), Font.BOLD);
     }
 
+    /** Helper notes and secondary rows. */
     public static Font small() {
-        return base().deriveFont(Math.max(10f, base().getSize2D() - 1f));
+        return at(Math.max(10f, baseSize() - 1f), Font.PLAIN);
     }
 
+    /**
+     * Uppercase column captions and eyebrow labels. Letter-spaced, because at
+     * this size all-caps without tracking closes up and stops being readable.
+     */
+    public static Font caption() {
+        return track(at(Math.max(9f, baseSize() - 2f), Font.BOLD), 0.11f);
+    }
+
+    /** A section title. */
+    public static Font h2() {
+        return at(baseSize() + 3f, Font.BOLD);
+    }
+
+    /** The screen title inside the content pane. */
+    public static Font h1() {
+        return at(baseSize() + 5f, Font.BOLD);
+    }
+
+    /** The product wordmark in the header. */
+    public static Font display() {
+        return track(at(baseSize() + 7f, Font.BOLD), -0.015f);
+    }
+
+    /** Large tabular numerals for the header counters. */
+    public static Font metric() {
+        return new Font(Font.MONOSPACED, Font.BOLD, Math.round(baseSize() + 6f));
+    }
+
+    /** Everything the user typed that a machine will read: regexes, tokens. */
     public static Font mono() {
-        return new Font(Font.MONOSPACED, Font.PLAIN, (int) Math.max(10f, base().getSize2D() - 1f));
+        return new Font(Font.MONOSPACED, Font.PLAIN, Math.round(Math.max(10f, baseSize() - 1f)));
     }
 
-    // ----------------------------------------------------------------- maths
+    public static Font monoSmall() {
+        return new Font(Font.MONOSPACED, Font.PLAIN, Math.round(Math.max(9f, baseSize() - 2f)));
+    }
+
+    // --------------------------------------------------------------- metrics
+
+    /** Spacing rhythm - dense, as befits a settings console. */
+    public static final int SPACE_XS = 4;
+    public static final int SPACE_SM = 8;
+    public static final int SPACE_MD = 12;
+    public static final int SPACE_LG = 16;
+    public static final int SPACE_XL = 24;
+    public static final int SPACE_XXL = 32;
+
+    /** Corner radii. */
+    public static final int RADIUS_SM = 5;
+    public static final int RADIUS_MD = 7;
+    public static final int RADIUS_LG = 10;
+
+    /** Width of the navigation rail. */
+    public static final int RAIL_WIDTH = 176;
+
+    // ----------------------------------------------------------------- utils
+
+    /** True when the host look and feel is a dark one. */
+    public static boolean isDark() {
+        return luminance(canvas()) < 0.5f;
+    }
 
     public static Color mix(Color a, Color b, float weightOfB) {
         float w = clamp(weightOfB);
@@ -120,6 +239,34 @@ public final class Theme {
 
     public static Color alpha(Color color, int alpha) {
         return new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha);
+    }
+
+    /** The disabled rendering of any colour: pushed most of the way to canvas. */
+    public static Color muted(Color color) {
+        return mix(color, canvas(), 0.62f);
+    }
+
+    private static Font track(Font font, float amount) {
+        Map<TextAttribute, Object> attributes = new HashMap<TextAttribute, Object>();
+        attributes.put(TextAttribute.TRACKING, Float.valueOf(amount));
+        return font.deriveFont(attributes);
+    }
+
+    private static String firstAvailable(String... families) {
+        try {
+            Set<String> installed = new HashSet<String>();
+            for (String name : GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()) {
+                installed.add(name);
+            }
+            for (String family : families) {
+                if (installed.contains(family)) {
+                    return family;
+                }
+            }
+        } catch (Exception ignored) {
+            // Headless or a locked-down environment; fall back to the host font.
+        }
+        return null;
     }
 
     private static float luminance(Color color) {

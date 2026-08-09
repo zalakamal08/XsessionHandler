@@ -1,5 +1,6 @@
 package burp.ui;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
@@ -17,11 +18,16 @@ import java.util.List;
 import javax.swing.JComponent;
 import javax.swing.KeyStroke;
 
-/** A painted on/off switch - the master control for a whole feature. */
+/**
+ * The painted on/off switch behind a whole feature. Off is a hollow track so
+ * "paused" reads as absence rather than as another colour; on fills with the
+ * accent and slides the knob across.
+ */
 public class SwitchButton extends JComponent {
 
-    private static final int WIDTH = 38;
-    private static final int HEIGHT = 20;
+    private static final int WIDTH = 42;
+    private static final int HEIGHT = 22;
+    private static final int PAD = 3;
 
     private final List<ActionListener> listeners = new ArrayList<ActionListener>();
     private boolean selected;
@@ -97,28 +103,39 @@ public class SwitchButton extends JComponent {
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        int h = getHeight();
         int w = getWidth();
-        Color track;
-        if (!isEnabled()) {
-            track = Theme.mix(Theme.muted(), Theme.background(), 0.6f);
-        } else if (selected) {
-            track = hover ? Theme.success().brighter() : Theme.success();
+        int h = getHeight();
+        boolean on = isEnabled();
+
+        if (selected) {
+            Color fill = !on ? Theme.muted(Theme.accent())
+                    : hover ? Theme.lighten(Theme.accent(), 0.10f) : Theme.accent();
+            g2.setColor(fill);
+            g2.fillRoundRect(0, 0, w, h, h, h);
         } else {
-            track = hover ? Theme.mix(Theme.muted(), Theme.background(), 0.2f) : Theme.muted();
+            g2.setColor(on ? Theme.well() : Theme.canvas());
+            g2.fillRoundRect(0, 0, w, h, h, h);
+            g2.setColor(on && hover ? Theme.lineStrong() : Theme.line());
+            g2.setStroke(new BasicStroke(1.4f));
+            g2.drawRoundRect(1, 1, w - 2, h - 2, h - 2, h - 2);
         }
-        g2.setColor(track);
-        g2.fillRoundRect(0, 0, w, h, h, h);
+
+        int knob = h - PAD * 2;
+        int x = selected ? w - knob - PAD : PAD;
+        Color knobColor;
+        if (selected) {
+            knobColor = on ? Theme.onAccent() : Theme.mix(Theme.onAccent(), Theme.canvas(), 0.45f);
+        } else {
+            knobColor = on ? Theme.faint() : Theme.line();
+        }
+        g2.setColor(knobColor);
+        g2.fillOval(x, PAD, knob, knob);
 
         if (isFocusOwner()) {
             g2.setColor(Theme.accent());
-            g2.drawRoundRect(0, 0, w - 1, h - 1, h, h);
+            g2.setStroke(new BasicStroke(1.5f));
+            g2.drawRoundRect(-2, -2, w + 3, h + 3, h + 4, h + 4);
         }
-
-        int knob = h - 6;
-        int x = selected ? w - knob - 3 : 3;
-        g2.setColor(Theme.isDark() && !isEnabled() ? Theme.mix(Color.WHITE, Theme.background(), 0.4f) : Color.WHITE);
-        g2.fillOval(x, 3, knob, knob);
         g2.dispose();
     }
 }
