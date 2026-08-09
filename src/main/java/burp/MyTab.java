@@ -1,16 +1,22 @@
 package burp;
 
-import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Cursor;
+import java.awt.Desktop;
 import java.awt.Dimension;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
+import java.awt.FlowLayout;
+import java.awt.FontMetrics;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 import java.awt.event.ActionEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.net.URI;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,65 +26,59 @@ import java.util.regex.Pattern;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JTabbedPane;
 import javax.swing.JTable;
+import javax.swing.JTextField;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
-import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.UIManager;
+import javax.swing.border.Border;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.table.DefaultTableModel;
-import javax.swing.table.JTableHeader;
-
-import burp.ui.Block;
-import burp.ui.Meter;
-import burp.ui.Rail;
-import burp.ui.RuleGrid;
-import burp.ui.Theme;
-import burp.ui.Ui;
-import burp.ui.UiTextField;
 
 /**
  * The XsessionHandler tab.
  *
- * The tab is a console, not a settings dialog. A permanent header carries the
- * two master switches and their live counters, a rail down the left names the
- * three places you can be, and the content pane shows one of them at a time.
- * A status line along the bottom narrates whatever just happened.
+ * Deliberately plain: stock Swing components, the host look and feel's own
+ * colours and fonts, and grouped titled borders. Nothing here paints itself,
+ * so the tab looks like the rest of Burp in both the light and the dark theme
+ * and needs no upkeep when Burp restyles.
  */
 public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.StatusSink, TokenStore.Listener {
 
     private static final String[] COLUMNS = { "Token", "Scope", "Len", "Value", "Captured", "Tool", "Source URL" };
-    private static final String NAV_CAPTURE = "capture";
-    private static final String NAV_INJECT = "inject";
-    private static final String NAV_TOKENS = "tokens";
+    private static final int TAB_TOKENS = 2;
 
     private final IBurpExtenderCallbacks callbacks;
     private final MyHttpListener httpListener;
 
     private JPanel root;
-    private Rail rail;
-    private StatusBar statusBar;
+    private JTabbedPane tabs;
+    private JLabel status;
 
-    private final CardLayout screens = new CardLayout();
-    private final JPanel screenArea = new JPanel(screens);
+    private final JPanel captureBody = column();
+    private final JPanel injectBody = column();
 
-    private final JPanel captureBody = Ui.column();
-    private final JPanel injectBody = Ui.column();
+    private final JCheckBox captureToggle = new JCheckBox("Capture", Config.CAPTURE_ENABLED);
+    private final JCheckBox injectToggle = new JCheckBox("Inject", Config.AUTO_REPLACE_ENABLED);
+    private final JLabel captureState = new JLabel();
+    private final JLabel injectState = new JLabel();
 
     /**
      * Re-applies each rule's own checkbox state to its fields. A master switch
-     * enables the whole tab in one sweep, which would otherwise wake up fields
+     * enables a whole tab in one sweep, which would otherwise wake up fields
      * belonging to rules the user had deliberately left off.
      */
     private final List<Runnable> captureSync = new ArrayList<Runnable>();
     private final List<Runnable> injectSync = new ArrayList<Runnable>();
-
-    private Meter captureMeter;
-    private Meter injectMeter;
 
     private final DefaultTableModel tableModel = new DefaultTableModel(COLUMNS, 0) {
         @Override
@@ -91,7 +91,19 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             return column == 2 ? Integer.class : String.class;
         }
     };
-    private final JTable table = new JTable(tableModel);
+    /** Columns are narrower than a token, so the full value lives in a tooltip. */
+    private final JTable table = new JTable(tableModel) {
+        @Override
+        public String getToolTipText(MouseEvent event) {
+            int row = rowAtPoint(event.getPoint());
+            int column = columnAtPoint(event.getPoint());
+            if (row < 0 || column < 0) {
+                return null;
+            }
+            Object value = getValueAt(row, column);
+            return value == null ? null : String.valueOf(value);
+        }
+    };
     private final CardLayout tableSwap = new CardLayout();
     private final JPanel tableArea = new JPanel(tableSwap);
 
@@ -102,195 +114,148 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         httpListener.setStatusSink(this);
         TokenStore.addListener(this);
         refreshTokenTable();
-        say("Ready. Log in through Burp once and every following request carries the token.", Theme.ok());
+        say("Ready. Log in through Burp once and every following request carries the token.", false);
     }
 
     // ----------------------------------------------------------------- build
 
     private void build() {
-        screenArea.setOpaque(false);
-        screenArea.add(scrollable(buildCaptureScreen()), NAV_CAPTURE);
-        screenArea.add(scrollable(buildInjectScreen()), NAV_INJECT);
-        screenArea.add(buildTokensScreen(), NAV_TOKENS);
+        tabs = new JTabbedPane();
+        tabs.addTab("Capture", scrollable(buildCaptureTab()));
+        tabs.addTab("Inject", scrollable(buildInjectTab()));
+        tabs.addTab("Tokens", buildTokensTab());
+        tabs.setToolTipTextAt(0, "Where tokens come from - which responses to read and what to pull out of them");
+        tabs.setToolTipTextAt(1, "Where tokens go - which requests get rewritten and in which position");
+        tabs.setToolTipTextAt(2, "Everything captured so far");
 
-        rail = new Rail(key -> screens.show(screenArea, key));
-        rail.item(NAV_CAPTURE, "Capture", Rail.CAPTURE);
-        rail.item(NAV_INJECT, "Inject", Rail.INJECT);
-        rail.item(NAV_TOKENS, "Tokens", Rail.TOKENS);
-        rail.select(NAV_CAPTURE);
+        status = new JLabel(" ");
+        status.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
 
-        JPanel middle = new JPanel(new BorderLayout());
-        middle.setOpaque(false);
-        middle.add(rail, BorderLayout.WEST);
-        middle.add(screenArea, BorderLayout.CENTER);
-
-        statusBar = new StatusBar();
+        JPanel statusBar = new JPanel(new BorderLayout());
+        statusBar.add(status, BorderLayout.WEST);
+        statusBar.add(link("XsessionHandler on GitHub", Config.PROJECT_LINK), BorderLayout.EAST);
+        statusBar.setBorder(BorderFactory.createEmptyBorder(0, 0, 2, 8));
 
         root = new JPanel(new BorderLayout());
-        root.setBackground(Theme.canvas());
+        root.setBorder(BorderFactory.createEmptyBorder(6, 8, 4, 8));
         root.add(buildHeader(), BorderLayout.NORTH);
-        root.add(middle, BorderLayout.CENTER);
+        root.add(tabs, BorderLayout.CENTER);
         root.add(statusBar, BorderLayout.SOUTH);
     }
 
     private JScrollPane scrollable(JComponent content) {
         JPanel padded = new JPanel(new BorderLayout());
-        padded.setOpaque(false);
-        padded.setBorder(BorderFactory.createEmptyBorder(Theme.SPACE_XL, Theme.SPACE_XL, Theme.SPACE_XL,
-                Theme.SPACE_XL));
         padded.add(content, BorderLayout.NORTH);
-
         JScrollPane scroll = new JScrollPane(padded);
         scroll.setBorder(BorderFactory.createEmptyBorder());
-        scroll.setOpaque(false);
-        scroll.getViewport().setBackground(Theme.canvas());
         scroll.getVerticalScrollBar().setUnitIncrement(18);
         scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         return scroll;
     }
 
-    /** The title of whichever screen the rail is pointing at. */
-    private JComponent screenTitle(String title, String description) {
-        JPanel column = Ui.column();
-        column.setBorder(BorderFactory.createEmptyBorder(0, 0, Theme.SPACE_XL, 0));
-        column.add(Ui.text(title, Theme.h1(), Theme.text()));
-        column.add(Box.createVerticalStrut(Theme.SPACE_XS));
-        column.add(Ui.text(description, Theme.body(), Theme.dim()));
-        return column;
-    }
-
     // ---------------------------------------------------------------- header
 
     private JComponent buildHeader() {
-        JPanel header = new JPanel(new BorderLayout(Theme.SPACE_XL, 0)) {
-            @Override
-            protected void paintComponent(Graphics g) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setColor(Theme.surface());
-                g2.fillRect(0, 0, getWidth(), getHeight());
-                g2.setColor(Theme.lineStrong());
-                g2.drawLine(0, getHeight() - 1, getWidth(), getHeight() - 1);
-                g2.dispose();
-            }
-        };
-        header.setBorder(BorderFactory.createEmptyBorder(Theme.SPACE_MD, Theme.SPACE_XL, Theme.SPACE_MD,
-                Theme.SPACE_XL));
+        JPanel header = new JPanel();
+        header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
 
-        JPanel brand = Ui.column();
-        JPanel wordmarkRow = Ui.row(Theme.SPACE_SM);
-        wordmarkRow.add(Ui.text("XsessionHandler", Theme.display(), Theme.text()));
-        wordmarkRow.add(new Ui.Chip(Config.EXT_VERSION, Theme.accent()));
-        brand.add(wordmarkRow);
+        JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        JLabel name = new JLabel("XsessionHandler " + Config.EXT_VERSION);
+        name.setFont(name.getFont().deriveFont(java.awt.Font.BOLD));
+        titleRow.add(name);
+        titleRow.add(new JLabel("- token capture and injection, straight from the HTTP listener."));
+        titleRow.add(new JLabel("  Built by"));
+        titleRow.add(link("@" + Config.AUTHOR_HANDLE, Config.AUTHOR_LINK));
 
-        JPanel taglineRow = Ui.row(Theme.SPACE_SM);
-        taglineRow.add(Ui.dim("Token capture and injection, straight from the HTTP listener"));
-        taglineRow.add(Ui.dim("·"));
-        taglineRow.add(Ui.dim("Built by"));
-        taglineRow.add(Ui.link("@" + Config.AUTHOR_HANDLE, Config.AUTHOR_LINK));
-        brand.add(Box.createVerticalStrut(Theme.SPACE_XS));
-        brand.add(taglineRow);
-
-        JPanel meters = new JPanel();
-        meters.setOpaque(false);
-        meters.setLayout(new BoxLayout(meters, BoxLayout.X_AXIS));
-
-        captureMeter = new Meter("Capture", "captured", Config.CAPTURE_ENABLED, e -> {
-            boolean on = captureMeter.isOn();
+        JPanel switchRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        captureToggle.addActionListener((ActionEvent e) -> {
+            boolean on = captureToggle.isSelected();
             Config.CAPTURE_ENABLED = on;
-            captureMeter.setState(on);
             setEnabledDeep(captureBody, on);
             if (on) {
                 for (Runnable sync : captureSync) {
                     sync.run();
                 }
             }
-            say("Capture " + (on ? "enabled - responses are being read." : "paused - no tokens will be read."),
-                    on ? Theme.ok() : Theme.warn());
+            refreshStats();
+            say("Capture " + (on ? "enabled - responses are being read." : "paused - no tokens will be read."), !on);
         });
-        captureMeter.toggle().setToolTipText("Read tokens out of responses");
-
-        injectMeter = new Meter("Inject", "injected", Config.AUTO_REPLACE_ENABLED, e -> {
-            boolean on = injectMeter.isOn();
+        injectToggle.addActionListener((ActionEvent e) -> {
+            boolean on = injectToggle.isSelected();
             Config.AUTO_REPLACE_ENABLED = on;
-            injectMeter.setState(on);
             setEnabledDeep(injectBody, on);
             if (on) {
                 for (Runnable sync : injectSync) {
                     sync.run();
                 }
             }
-            say("Inject " + (on ? "enabled - outgoing requests are rewritten." : "paused - requests go out as-is."),
-                    on ? Theme.ok() : Theme.warn());
+            refreshStats();
+            say("Inject " + (on ? "enabled - outgoing requests are rewritten." : "paused - requests go out as-is."), !on);
         });
-        injectMeter.toggle().setToolTipText("Rewrite outgoing requests with the tokens");
+        captureToggle.setToolTipText("Read tokens out of responses");
+        injectToggle.setToolTipText("Rewrite outgoing requests with the tokens");
 
-        meters.add(captureMeter);
-        meters.add(Box.createHorizontalStrut(Theme.SPACE_MD));
-        meters.add(injectMeter);
+        switchRow.add(captureToggle);
+        switchRow.add(captureState);
+        switchRow.add(Box.createHorizontalStrut(16));
+        switchRow.add(injectToggle);
+        switchRow.add(injectState);
 
-        JPanel metersHolder = new JPanel(new BorderLayout());
-        metersHolder.setOpaque(false);
-        metersHolder.add(meters, BorderLayout.SOUTH);
-
-        header.add(brand, BorderLayout.WEST);
-        header.add(metersHolder, BorderLayout.EAST);
+        header.add(titleRow);
+        header.add(switchRow);
+        header.add(Box.createVerticalStrut(4));
         return header;
     }
 
-    // -------------------------------------------------------- capture screen
+    // ----------------------------------------------------------- capture tab
 
-    private JComponent buildCaptureScreen() {
-        captureBody.add(screenTitle("Capture", "Where tokens come from - which responses to read, "
-                + "and what to pull out of them."));
-
-        Block filters = new Block("01", "Which responses to read",
-                "A response is only inspected when every ticked check passes.");
-        RuleGrid filterGrid = new RuleGrid(new String[] { "", "Pattern", "Notes" }, new float[] { 0, 1f, 0 });
-        filterGrid.row(setting(captureSync, filterGrid, "Request URL matches", Config.CHECK_REQ_URL_REGEX,
+    private JComponent buildCaptureTab() {
+        JPanel filters = group("Which responses to read");
+        filters.add(note("A response is only inspected when every ticked check passes."));
+        JPanel filterGrid = grid();
+        int row = 0;
+        addSetting(filterGrid, row++, captureSync, "Request URL matches", Config.CHECK_REQ_URL_REGEX,
                 v -> Config.CHECK_REQ_URL_REGEX = v, Config.VALUE_REQ_URL_REGEX,
-                v -> Config.VALUE_REQ_URL_REGEX = v, true, "RegEx, tested against the whole URL"));
-        filterGrid.row(setting(captureSync, filterGrid, "Response header contains", Config.CHECK_RESP_CONTENT_TYPE,
+                v -> Config.VALUE_REQ_URL_REGEX = v, true, "RegEx, tested against the whole URL");
+        addSetting(filterGrid, row++, captureSync, "Response header contains", Config.CHECK_RESP_CONTENT_TYPE,
                 v -> Config.CHECK_RESP_CONTENT_TYPE = v, Config.VALUE_RESP_CONTENT_TYPE_HEADER,
-                v -> Config.VALUE_RESP_CONTENT_TYPE_HEADER = v, false, "plain text, not a RegEx"));
+                v -> Config.VALUE_RESP_CONTENT_TYPE_HEADER = v, false, "plain text, not a RegEx");
         filters.add(filterGrid);
 
-        Block extract = new Block("02", "What to pull out",
-                "Group 1 of each RegEx is stored as the token. Leave one unticked if your app has no such token.");
-        RuleGrid extractGrid = new RuleGrid(new String[] { "", "Pattern", "Notes" }, new float[] { 0, 1f, 0 });
-        extractGrid.row(setting(captureSync, extractGrid, "TOKEN-1", Config.LISTEN_4_ACCESS_TOKEN,
+        JPanel extract = group("What to pull out");
+        extract.add(note("Group 1 of each RegEx is stored as the token. "
+                + "Leave one unticked if your app has no such token."));
+        JPanel extractGrid = grid();
+        row = 0;
+        addSetting(extractGrid, row++, captureSync, "TOKEN-1", Config.LISTEN_4_ACCESS_TOKEN,
                 v -> Config.LISTEN_4_ACCESS_TOKEN = v, Config.VALUE_READ_JWT_REGEX,
-                v -> Config.VALUE_READ_JWT_REGEX = v, true, "JWT / access token"));
-        extractGrid.row(setting(captureSync, extractGrid, "TOKEN-2", Config.LISTEN_4_REFRESH_TOKEN,
+                v -> Config.VALUE_READ_JWT_REGEX = v, true, "JWT / access token");
+        addSetting(extractGrid, row++, captureSync, "TOKEN-2", Config.LISTEN_4_REFRESH_TOKEN,
                 v -> Config.LISTEN_4_REFRESH_TOKEN = v, Config.VALUE_READ_REFRESH_TOKEN_REGEX,
-                v -> Config.VALUE_READ_REFRESH_TOKEN_REGEX = v, true, "refresh / CSRF token"));
+                v -> Config.VALUE_READ_REFRESH_TOKEN_REGEX = v, true, "refresh / CSRF token");
         extract.add(extractGrid);
 
-        Block scope = new Block("03", "Testing more than one app at once?",
-                "Optional. Skip this if you are working on a single application.");
-        scope.headerControl(new Ui.Chip("Optional", Theme.info()));
-        scope.add(note("Two apps that both return <code>access_token</code> would otherwise share one slot and keep "
-                + "overwriting each other. To keep them apart, add a header to each <b>login</b> request naming the "
-                + "path that token belongs to - for example <code>Shp-Path: /appA/</code> - and the token is filed "
-                + "under <code>/appA/</code> instead of <code>/</code>. Requests to <code>/appA/...</code> then get "
-                + "that token back. You add the header yourself, with a Proxy match/replace rule or by hand."));
-        scope.gap(Theme.SPACE_MD);
-        RuleGrid scopeGrid = new RuleGrid(new String[] { "", "Pattern", "Notes" }, new float[] { 0, 1f, 0 });
-        scopeGrid.row(setting(captureSync, scopeGrid, "Read the scope from this request header", Config.CHECK_REQ_PATH,
+        JPanel scope = group("Testing more than one app at once (optional)");
+        scope.add(note("Two apps that both return access_token would otherwise share one slot and keep overwriting "
+                + "each other. To keep them apart, add a header to each login request naming the path that token "
+                + "belongs to - for example \"Shp-Path: /appA/\" - and the token is filed under /appA/ instead of /. "
+                + "Requests to /appA/... then get that token back. You add the header yourself, with a Proxy "
+                + "match/replace rule or by hand."));
+        JPanel scopeGrid = grid();
+        addSetting(scopeGrid, 0, captureSync, "Read the scope from this request header", Config.CHECK_REQ_PATH,
                 v -> Config.CHECK_REQ_PATH = v, Config.VALUE_REQ_PATH_HEADER,
-                v -> Config.VALUE_REQ_PATH_HEADER = v, true, "group 1 becomes the scope"));
+                v -> Config.VALUE_REQ_PATH_HEADER = v, true, "group 1 becomes the scope");
         scope.add(scopeGrid);
 
-        Block debug = new Block("04", "Not seeing your token?",
-                "Turn this on to find out which check is rejecting it.");
-        JCheckBox rejectLogs = Ui.checkBox("Log every response that was skipped, and say why",
+        JPanel debug = group("Not seeing your token?");
+        JCheckBox rejectLogs = new JCheckBox("Log every response that was skipped, and say why",
                 Config.CHECK_PRINT_REJECT_LOGS_1A_1B);
         rejectLogs.addActionListener((ActionEvent e) -> {
             Config.CHECK_PRINT_REJECT_LOGS_1A_1B = rejectLogs.isSelected();
             say("Skipped-response logging " + (rejectLogs.isSelected()
-                    ? "on - check the Extensions output tab."
-                    : "off."), Theme.accent());
+                    ? "on - check the Extensions output tab." : "off."), false);
         });
-        debug.add(rejectLogs);
+        debug.add(leftAligned(rejectLogs));
 
         captureBody.add(filters);
         captureBody.add(extract);
@@ -300,66 +265,63 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         return captureBody;
     }
 
-    // --------------------------------------------------------- inject screen
+    // ------------------------------------------------------------ inject tab
 
-    private JComponent buildInjectScreen() {
-        injectBody.add(screenTitle("Inject", "Where tokens go - which requests get rewritten, "
-                + "and in which position."));
-
-        Block tools = new Block("01", "Which Burp tools to rewrite",
-                "Extender is off by default so your own token-fetch traffic is not rewritten with a stale value.");
+    private JComponent buildInjectTab() {
+        JPanel tools = group("Which Burp tools to rewrite");
+        tools.add(note("Extender is off by default so your own token-fetch traffic "
+                + "is not rewritten with a stale value."));
+        JPanel toolRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 2));
         final JCheckBox[] boxes = new JCheckBox[Config.TOOLS.length];
-        JPanel toolRow = Ui.row(Theme.SPACE_LG);
         for (int i = 0; i < Config.TOOLS.length; i++) {
             final Config.Tool tool = Config.TOOLS[i];
-            JCheckBox box = Ui.checkBox(tool.label, tool.enabled);
+            JCheckBox box = new JCheckBox(tool.label, tool.enabled);
             box.addActionListener((ActionEvent e) -> {
                 tool.enabled = box.isSelected();
-                say("Injection for " + tool.label + " " + (tool.enabled ? "on." : "off."), Theme.accent());
+                say("Injection for " + tool.label + " " + (tool.enabled ? "on." : "off."), false);
             });
             boxes[i] = box;
             toolRow.add(box);
         }
-        tools.headerControl(Ui.clickable("Select all", () -> setAllTools(boxes, true), null));
-        tools.headerControl(Ui.dim("/"));
-        tools.headerControl(Ui.clickable("Select none", () -> setAllTools(boxes, false), null));
         tools.add(toolRow);
+        JPanel quick = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        quick.add(button("Select All", e -> setAllTools(boxes, true)));
+        quick.add(button("Select None", e -> setAllTools(boxes, false)));
+        tools.add(quick);
 
-        String[] captions = { "Position", "Match", "Replace with", "Format", "", "Sends" };
-        float[] weights = { 0, 1f, 0.8f, 0, 0, 1.3f };
-
-        Block token1 = new Block("02", "TOKEN-1 goes here",
-                "JWT / access token. Tick every position your app uses.");
-        RuleGrid grid1 = new RuleGrid(captions, weights);
-        grid1.row(replace("Request header", Config.CHECK_TOKEN1_HEADER_1, v -> Config.CHECK_TOKEN1_HEADER_1 = v,
+        JPanel token1 = group("TOKEN-1 goes here (JWT / access token)");
+        JPanel grid1 = grid();
+        addReplaceHeader(grid1);
+        addReplace(grid1, 1, "Request header", Config.CHECK_TOKEN1_HEADER_1, v -> Config.CHECK_TOKEN1_HEADER_1 = v,
                 Config.VAL_JWT_HEADER_NAME_1, v -> Config.VAL_JWT_HEADER_NAME_1 = v, false, null, null,
                 Config.REPLACE_STRUCTURE_TOKEN1_HEAD_1, v -> Config.REPLACE_STRUCTURE_TOKEN1_HEAD_1 = v,
                 Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_1,
-                v -> Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_1 = v, "TOKEN-1"));
-        grid1.row(replace("A second header", Config.CHECK_TOKEN1_HEADER_2, v -> Config.CHECK_TOKEN1_HEADER_2 = v,
+                v -> Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_1 = v, "TOKEN-1");
+        addReplace(grid1, 2, "A second header", Config.CHECK_TOKEN1_HEADER_2, v -> Config.CHECK_TOKEN1_HEADER_2 = v,
                 Config.VAL_JWT_HEADER_NAME_2, v -> Config.VAL_JWT_HEADER_NAME_2 = v, false, null, null,
                 Config.REPLACE_STRUCTURE_TOKEN1_HEAD_2, v -> Config.REPLACE_STRUCTURE_TOKEN1_HEAD_2 = v,
                 Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_2,
-                v -> Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_2 = v, "TOKEN-1"));
-        grid1.row(replace("A body parameter", Config.CHECK_TOKEN1_BODY, v -> Config.CHECK_TOKEN1_BODY = v,
+                v -> Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_2 = v, "TOKEN-1");
+        addReplace(grid1, 3, "A body parameter", Config.CHECK_TOKEN1_BODY, v -> Config.CHECK_TOKEN1_BODY = v,
                 Config.VAL_JWT_BODY_NAME_1, v -> Config.VAL_JWT_BODY_NAME_1 = v, true,
                 Config.VAL_JWT_BODY_NAME_2, v -> Config.VAL_JWT_BODY_NAME_2 = v,
                 Config.REPLACE_STRUCTURE_TOKEN1_BODY, v -> Config.REPLACE_STRUCTURE_TOKEN1_BODY = v, null, null,
-                "TOKEN-1"));
+                "TOKEN-1");
         token1.add(grid1);
 
-        Block token2 = new Block("03", "TOKEN-2 goes here", "Refresh / CSRF token.");
-        RuleGrid grid2 = new RuleGrid(captions, weights);
-        grid2.row(replace("Request header", Config.CHECK_TOKEN2_HEADER, v -> Config.CHECK_TOKEN2_HEADER = v,
+        JPanel token2 = group("TOKEN-2 goes here (refresh / CSRF token)");
+        JPanel grid2 = grid();
+        addReplaceHeader(grid2);
+        addReplace(grid2, 1, "Request header", Config.CHECK_TOKEN2_HEADER, v -> Config.CHECK_TOKEN2_HEADER = v,
                 Config.VAL_TOKEN2_HDR_PARAM_NAME_1, v -> Config.VAL_TOKEN2_HDR_PARAM_NAME_1 = v, false, null, null,
                 Config.REPLACE_STRUCTURE_TOKEN2_HEAD, v -> Config.REPLACE_STRUCTURE_TOKEN2_HEAD = v,
                 Config.CHECK_TOKEN2_HEADER_ADD_IF_NOT_EXIST, v -> Config.CHECK_TOKEN2_HEADER_ADD_IF_NOT_EXIST = v,
-                "TOKEN-2"));
-        grid2.row(replace("A body parameter", Config.CHECK_TOKEN2_BODY, v -> Config.CHECK_TOKEN2_BODY = v,
+                "TOKEN-2");
+        addReplace(grid2, 2, "A body parameter", Config.CHECK_TOKEN2_BODY, v -> Config.CHECK_TOKEN2_BODY = v,
                 Config.VAL_TOKEN2_BODY_PARAM_NAME_1, v -> Config.VAL_TOKEN2_BODY_PARAM_NAME_1 = v, true,
                 Config.VAL_TOKEN2_BODY_PARAM_NAME_2, v -> Config.VAL_TOKEN2_BODY_PARAM_NAME_2 = v,
                 Config.REPLACE_STRUCTURE_TOKEN2_BODY, v -> Config.REPLACE_STRUCTURE_TOKEN2_BODY = v, null, null,
-                "TOKEN-2"));
+                "TOKEN-2");
         token2.add(grid2);
 
         injectBody.add(tools);
@@ -374,205 +336,81 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             boxes[i].setSelected(on);
             Config.TOOLS[i].enabled = on;
         }
-        say(on ? "Injecting into every Burp tool." : "Injection disabled for every tool.",
-                on ? Theme.accent() : Theme.warn());
+        say(on ? "Injecting into every Burp tool." : "Injection disabled for every tool.", !on);
     }
 
-    // --------------------------------------------------------- tokens screen
+    // ------------------------------------------------------------ tokens tab
 
-    private JComponent buildTokensScreen() {
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.setOpaque(false);
-        panel.setBorder(BorderFactory.createEmptyBorder(Theme.SPACE_XL, Theme.SPACE_XL, Theme.SPACE_XL,
-                Theme.SPACE_XL));
-
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.add(screenTitle("Tokens", "Everything captured so far."), BorderLayout.NORTH);
-
-        JPanel toolbar = Ui.row(Theme.SPACE_SM);
-        toolbar.setBorder(BorderFactory.createEmptyBorder(0, 0, Theme.SPACE_MD, 0));
-        toolbar.add(Ui.primaryButton("Copy value", e -> copySelectedValue()));
-        toolbar.add(Ui.ghostButton("Remove", e -> removeSelected()));
-        toolbar.add(Ui.ghostButton("Clear all", e -> {
-            int removed = TokenStore.clear();
-            Log.print("[" + Log.now() + "] TOKENS CLEARED [" + removed + "]");
-            say(removed + " token(s) cleared.", Theme.warn());
-        }));
-        toolbar.add(Ui.strut(Theme.SPACE_SM));
-        toolbar.add(Ui.dim("Held in memory only - cleared when the extension unloads. Click a heading to sort."));
-        head.add(toolbar, BorderLayout.SOUTH);
+    private JComponent buildTokensTab() {
+        JPanel panel = new JPanel(new BorderLayout(0, 4));
+        panel.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
 
         styleTable();
         JScrollPane scroll = new JScrollPane(table);
         // JTable only installs its header on addNotify; set it up front so the
         // column titles are there from the first paint.
         scroll.setColumnHeaderView(table.getTableHeader());
-        scroll.setBorder(BorderFactory.createLineBorder(Theme.line()));
-        scroll.getViewport().setBackground(Theme.surface());
 
-        tableArea.setOpaque(false);
-        tableArea.add(new EmptyState(), "empty");
+        JPanel empty = new JPanel(new BorderLayout());
+        empty.setBorder(UIManager.getBorder("ScrollPane.border"));
+        JLabel hint = new JLabel("<html><div style='text-align:center'>"
+                + "No tokens captured yet.<br><br>"
+                + "Log in to your application through Burp.<br>"
+                + "If nothing shows up, check the RegEx on the Capture tab."
+                + "</div></html>", SwingConstants.CENTER);
+        empty.add(hint, BorderLayout.CENTER);
+
+        tableArea.add(empty, "empty");
         tableArea.add(scroll, "table");
 
-        panel.add(head, BorderLayout.NORTH);
+        JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        toolbar.add(button("Copy Value", e -> copySelectedValue()));
+        toolbar.add(button("Remove Selected", e -> removeSelected()));
+        toolbar.add(button("Clear All", e -> {
+            int removed = TokenStore.clear();
+            Log.print("[" + Log.now() + "] TOKENS CLEARED [" + removed + "]");
+            say(removed + " token(s) cleared.", false);
+        }));
+
+        panel.add(toolbar, BorderLayout.NORTH);
         panel.add(tableArea, BorderLayout.CENTER);
+        panel.add(note("Tokens are held in memory only and are cleared when the extension unloads. "
+                + "Click a column heading to sort."), BorderLayout.SOUTH);
         return panel;
     }
 
-    /** What the Tokens screen shows before anything has been captured. */
-    private static class EmptyState extends JPanel {
-        EmptyState() {
-            setLayout(new BorderLayout());
-            setOpaque(false);
-            setBorder(BorderFactory.createLineBorder(Theme.line()));
-
-            JPanel middle = Ui.column();
-            middle.setBorder(BorderFactory.createEmptyBorder(Theme.SPACE_XXL, 0, Theme.SPACE_XXL, 0));
-
-            JComponent icon = new JComponent() {
-                @Override
-                public Dimension getPreferredSize() {
-                    return new Dimension(56, 56);
-                }
-
-                @Override
-                public Dimension getMaximumSize() {
-                    return getPreferredSize();
-                }
-
-                @Override
-                protected void paintComponent(Graphics g) {
-                    Graphics2D g2 = (Graphics2D) g.create();
-                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    g2.setColor(Theme.accentSoft());
-                    g2.fillRoundRect(0, 0, 56, 56, Theme.RADIUS_LG, Theme.RADIUS_LG);
-                    Graphics2D inner = (Graphics2D) g2.create(16, 16, 28, 28);
-                    inner.setColor(Theme.accent());
-                    inner.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                    Rail.TOKENS.paint(inner, 24);
-                    inner.dispose();
-                    g2.dispose();
-                }
-            };
-            icon.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-            JLabel heading = Ui.text("No tokens captured yet", Theme.h2(), Theme.text());
-            heading.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-            // Two plain labels rather than one HTML block: Swing mislays an
-            // emphasised run inside a centred <div>, and this needs no measure.
-            JLabel line1 = Ui.text("Log in to your application through Burp.", Theme.body(), Theme.dim());
-            JLabel line2 = Ui.text("If nothing shows up, check the RegEx on the Capture screen.",
-                    Theme.body(), Theme.dim());
-            line1.setAlignmentX(Component.CENTER_ALIGNMENT);
-            line2.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-            middle.add(icon);
-            middle.add(Box.createVerticalStrut(Theme.SPACE_LG));
-            middle.add(heading);
-            middle.add(Box.createVerticalStrut(Theme.SPACE_SM));
-            middle.add(line1);
-            middle.add(Box.createVerticalStrut(Theme.SPACE_XS));
-            middle.add(line2);
-
-            JPanel centre = new JPanel();
-            centre.setOpaque(false);
-            centre.setLayout(new BoxLayout(centre, BoxLayout.X_AXIS));
-            centre.add(Box.createHorizontalGlue());
-            centre.add(middle);
-            centre.add(Box.createHorizontalGlue());
-            add(centre, BorderLayout.CENTER);
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            g.setColor(Theme.surface());
-            g.fillRect(0, 0, getWidth(), getHeight());
-        }
-    }
-
     private void styleTable() {
-        table.setFont(Theme.body());
-        table.setForeground(Theme.text());
-        table.setBackground(Theme.surface());
-        table.setRowHeight(Math.max(24, table.getFontMetrics(Theme.body()).getHeight() + 10));
-        table.setShowGrid(false);
-        table.setIntercellSpacing(new Dimension(0, 0));
-        table.setFillsViewportHeight(true);
-        table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         table.setAutoCreateRowSorter(true);
-        table.setSelectionBackground(Theme.accentSoft());
-        table.setSelectionForeground(Theme.text());
-
-        int[] widths = { 96, 140, 60, 520, 110, 100, 340 };
+        table.setRowHeight(Math.max(20, table.getFontMetrics(table.getFont()).getHeight() + 6));
+        int[] widths = { 80, 130, 50, 520, 80, 80, 320 };
         for (int i = 0; i < widths.length; i++) {
             table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
         }
-
-        DefaultTableCellRenderer renderer = new DefaultTableCellRenderer() {
-            @Override
-            public Component getTableCellRendererComponent(JTable t, Object value, boolean isSelected, boolean hasFocus,
-                                                           int row, int column) {
-                Component c = super.getTableCellRendererComponent(t, value, isSelected, hasFocus, row, column);
-                int modelColumn = t.convertColumnIndexToModel(column);
-                boolean machineText = modelColumn == 3 || modelColumn == 4 || modelColumn == 6;
-                setFont(modelColumn == 0 ? Theme.strong() : machineText ? Theme.mono() : Theme.body());
-                setHorizontalAlignment(modelColumn == 2 ? SwingConstants.RIGHT : SwingConstants.LEFT);
-                setBorder(BorderFactory.createEmptyBorder(0, Theme.SPACE_MD, 0, Theme.SPACE_MD));
-                if (!isSelected) {
-                    setBackground(row % 2 == 0 ? Theme.surface() : Theme.raised());
-                    setForeground(modelColumn == 0 ? Theme.accent()
-                            : modelColumn == 2 ? Theme.faint() : Theme.text());
-                }
-                setToolTipText(value == null ? null : String.valueOf(value));
-                return c;
-            }
-        };
-        for (int i = 0; i < COLUMNS.length; i++) {
-            table.getColumnModel().getColumn(i).setCellRenderer(renderer);
-        }
-
-        JTableHeader header = table.getTableHeader();
-        header.setBackground(Theme.raised());
-        header.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.lineStrong()));
-        header.setReorderingAllowed(false);
-        header.setDefaultRenderer((t, value, selected, focused, row, column) -> {
-            JLabel cell = new JLabel(String.valueOf(value).toUpperCase());
-            cell.setOpaque(true);
-            cell.setFont(Theme.caption());
-            cell.setForeground(Theme.faint());
-            cell.setBackground(Theme.raised());
-            cell.setHorizontalAlignment(t.convertColumnIndexToModel(column) == 2
-                    ? SwingConstants.RIGHT : SwingConstants.LEFT);
-            cell.setBorder(BorderFactory.createEmptyBorder(7, Theme.SPACE_MD, 7, Theme.SPACE_MD));
-            return cell;
-        });
     }
 
     private void copySelectedValue() {
         int row = table.getSelectedRow();
         if (row < 0) {
-            say("Select a row in the table first.", Theme.warn());
+            say("Select a row in the table first.", true);
             return;
         }
         String value = String.valueOf(tableModel.getValueAt(table.convertRowIndexToModel(row), 3));
         java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
                 .setContents(new java.awt.datatransfer.StringSelection(value), null);
-        say("Value copied to clipboard (" + value.length() + " chars).", Theme.ok());
+        say("Value copied to clipboard (" + value.length() + " chars).", false);
     }
 
     private void removeSelected() {
         int row = table.getSelectedRow();
         if (row < 0) {
-            say("Select a row in the table first.", Theme.warn());
+            say("Select a row in the table first.", true);
             return;
         }
         int modelRow = table.convertRowIndexToModel(row);
         String name = String.valueOf(tableModel.getValueAt(modelRow, 0));
         String path = String.valueOf(tableModel.getValueAt(modelRow, 1));
         TokenStore.remove(name, path);
-        say("Removed " + name + " for scope '" + path + "'.", Theme.warn());
+        say("Removed " + name + " for scope '" + path + "'.", false);
     }
 
     @Override
@@ -589,81 +427,210 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                     format.format(entry.updated), entry.tool, entry.sourceUrl });
         }
         tableSwap.show(tableArea, entries.isEmpty() ? "empty" : "table");
-        if (rail != null) {
-            rail.badge(NAV_TOKENS, entries.size());
+        if (tabs != null) {
+            tabs.setTitleAt(TAB_TOKENS, entries.isEmpty() ? "Tokens" : "Tokens (" + entries.size() + ")");
         }
         refreshStats();
     }
 
     private void refreshStats() {
-        if (captureMeter != null) {
-            captureMeter.setCount(Stats.captured());
-        }
-        if (injectMeter != null) {
-            injectMeter.setCount(Stats.injected());
-        }
+        captureState.setText("(" + (Config.CAPTURE_ENABLED ? "ON" : "OFF") + ")  "
+                + Stats.captured() + " captured");
+        injectState.setText("(" + (Config.AUTO_REPLACE_ENABLED ? "ON" : "OFF") + ")  "
+                + Stats.injected() + " injected");
     }
 
     // -------------------------------------------------------------- controls
 
-    /** A paragraph of explanation inside a block, wrapped to a readable measure. */
-    private static JComponent note(String html) {
-        JLabel label = new JLabel("<html><body style='width:660px'>" + html + "</body></html>");
-        label.setFont(Theme.small());
-        label.setForeground(Theme.dim());
-        label.setAlignmentX(Component.LEFT_ALIGNMENT);
+    /** A titled group box, the way the rest of Burp separates settings. */
+    private static JPanel group(String title) {
+        return new Group(title);
+    }
+
+    /**
+     * A vertical group that forces every child to the left margin.
+     *
+     * BoxLayout lines children up on their alignmentX, and a plain JPanel
+     * defaults to centred - so one FlowLayout row in the stack is enough to
+     * drag every left-aligned label in the same group off the margin with it.
+     */
+    private static class Group extends JPanel {
+        Group(String title) {
+            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+            setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createTitledBorder(title),
+                    BorderFactory.createEmptyBorder(4, 4, 4, 4)));
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+        }
+
+        @Override
+        public Component add(Component component) {
+            if (component instanceof JComponent) {
+                ((JComponent) component).setAlignmentX(Component.LEFT_ALIGNMENT);
+            }
+            return super.add(component);
+        }
+
+        @Override
+        public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    }
+
+    private static JPanel column() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return panel;
+    }
+
+    private static JPanel grid() {
+        JPanel panel = new JPanel(new GridBagLayout()) {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return panel;
+    }
+
+    /**
+     * Pins a component to the left margin. BorderLayout.WEST hands it exactly
+     * its preferred width at x=0, which a stretched component in a vertical
+     * BoxLayout does not reliably do.
+     */
+    private static JComponent leftAligned(JComponent component) {
+        JPanel row = new JPanel(new BorderLayout()) {
+            @Override
+            public Dimension getMaximumSize() {
+                // Asked for on every layout pass rather than captured once, so
+                // a wrapped label that turns out taller than first measured is
+                // not clipped against a stale height.
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        row.add(component, BorderLayout.WEST);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return row;
+    }
+
+    /** A wrapped line of explanatory text inside a group. */
+    private static JComponent note(String text) {
+        JLabel label = new JLabel("<html><body style='width:820px'>" + text + "</body></html>");
+        label.setBorder(BorderFactory.createEmptyBorder(0, 2, 4, 2));
+        // Wrapped in a left-flowing row: a bare label stretches to the width of
+        // the group and a short single line then floats away from the margin.
+        return leftAligned(label);
+    }
+
+    private static JButton button(String text, java.awt.event.ActionListener action) {
+        JButton button = new JButton(text);
+        button.addActionListener(action);
+        return button;
+    }
+
+    /** A clickable label that opens a URL in the browser. */
+    private static JLabel link(String text, String url) {
+        JLabel label = new JLabel("<html><a href=''>" + text + "</a></html>");
+        label.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        label.setToolTipText(url);
+        label.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                try {
+                    Desktop.getDesktop().browse(URI.create(url));
+                } catch (Exception ignored) {
+                    // No browser available; the tooltip still shows the URL.
+                }
+            }
+        });
         return label;
     }
 
-    /** One checkbox-plus-pattern rule, as the cells of a RuleGrid line. */
-    private Component[] setting(List<Runnable> syncs, JComponent owner, String label, boolean checked,
-                                Consumer<Boolean> onToggle, String value, Consumer<String> setter, boolean isRegex,
-                                String hint) {
-        JCheckBox box = Ui.checkBox(label, checked);
-        UiTextField field = field(value, setter, isRegex, label);
-        field.hint(isRegex ? "RegEx - group 1 is what gets stored" : "Plain text, matched anywhere in the headers");
+    private void addSetting(JPanel grid, int row, List<Runnable> syncs, String label, boolean checked,
+                            Consumer<Boolean> onToggle, String value, Consumer<String> setter, boolean isRegex,
+                            String hint) {
+        GridBagConstraints c = new GridBagConstraints();
+        c.insets = new Insets(2, 2, 2, 8);
+        c.gridy = row;
+        c.anchor = GridBagConstraints.WEST;
+
+        JCheckBox box = new JCheckBox(label, checked);
+        JTextField field = field(value, setter, isRegex, label);
 
         box.addActionListener((ActionEvent e) -> {
             onToggle.accept(box.isSelected());
             field.setEnabled(box.isSelected());
-            owner.repaint();
-            say(label + " " + (box.isSelected() ? "on." : "off."), Theme.accent());
+            say(label + " " + (box.isSelected() ? "on." : "off."), false);
         });
         field.setEnabled(checked);
         syncs.add(() -> field.setEnabled(box.isSelected()));
 
-        return new Component[] { box, field, Ui.dim(hint) };
+        c.gridx = 0;
+        c.weightx = 0;
+        c.fill = GridBagConstraints.NONE;
+        grid.add(box, c);
+
+        c.gridx = 1;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        grid.add(field, c);
+
+        c.gridx = 2;
+        c.weightx = 0;
+        c.fill = GridBagConstraints.NONE;
+        grid.add(new JLabel(hint), c);
+    }
+
+    private void addReplaceHeader(JPanel grid) {
+        String[] titles = { "Position", "Match", "Replace with", "Format", "", "Sends" };
+        GridBagConstraints c = new GridBagConstraints();
+        c.insets = new Insets(2, 2, 2, 8);
+        c.gridy = 0;
+        c.anchor = GridBagConstraints.WEST;
+        for (int i = 0; i < titles.length; i++) {
+            c.gridx = i;
+            c.weightx = (i == 1 || i == 2 || i == 5) ? 1 : 0;
+            c.fill = GridBagConstraints.HORIZONTAL;
+            grid.add(new JLabel(titles[i]), c);
+        }
     }
 
     /**
-     * One injection position, as the cells of a RuleGrid line. The last cell is
-     * a live preview of exactly what will be put on the wire, composed from the
-     * row's own inputs and a real captured token when one exists - so the
-     * format string can be checked without sending a request.
+     * One injection position on a single line. The last cell previews exactly
+     * what will go on the wire, composed from this row's inputs and a real
+     * captured token when there is one, so a format string can be checked
+     * without sending a request.
      */
-    private Component[] replace(String label, boolean checked, Consumer<Boolean> onToggle,
-                                String matchValue, Consumer<String> matchSetter, boolean matchIsRegex,
-                                String withValue, Consumer<String> withSetter,
-                                String formatValue, Consumer<String> formatSetter,
-                                Boolean addChecked, Consumer<Boolean> onAddToggle, String tokenName) {
-        JCheckBox box = Ui.checkBox(label, checked);
-        UiTextField matchField = field(matchValue, matchSetter, matchIsRegex, label);
-        matchField.hint(matchIsRegex ? "RegEx matched against the request body"
-                : "The header prefix to look for, ex: Authorization: Bearer");
-        UiTextField withField = withValue == null ? null : field(withValue, withSetter, false, label);
-        if (withField != null) {
-            withField.hint("The literal text put back in front of the token");
-        }
-        UiTextField formatField = field(formatValue, formatSetter, false, label);
-        formatField.setColumns(5);
-        formatField.hint("First %s is the name, second %s is the token");
+    private void addReplace(JPanel grid, int row, String label, boolean checked, Consumer<Boolean> onToggle,
+                            String matchValue, Consumer<String> matchSetter, boolean matchIsRegex,
+                            String withValue, Consumer<String> withSetter,
+                            String formatValue, Consumer<String> formatSetter,
+                            Boolean addChecked, Consumer<Boolean> onAddToggle, String tokenName) {
+        GridBagConstraints c = new GridBagConstraints();
+        c.insets = new Insets(2, 2, 2, 8);
+        c.gridy = row;
+        c.anchor = GridBagConstraints.WEST;
 
-        JCheckBox addBox = addChecked == null ? null : Ui.checkBox("Add if missing", addChecked);
+        JCheckBox box = new JCheckBox(label, checked);
+        JTextField matchField = field(matchValue, matchSetter, matchIsRegex, label);
+        matchField.setToolTipText(matchIsRegex ? "RegEx matched against the request body"
+                : "The header prefix to look for, ex: Authorization: Bearer");
+        JTextField withField = withValue == null ? null : field(withValue, withSetter, false, label);
+        if (withField != null) {
+            withField.setToolTipText("The literal text put back in front of the token");
+        }
+        JTextField formatField = field(formatValue, formatSetter, false, label);
+        formatField.setColumns(5);
+        formatField.setToolTipText("First %s is the name, second %s is the token");
+
+        JCheckBox addBox = addChecked == null ? null : new JCheckBox("Add if missing", addChecked);
         if (addBox != null) {
             addBox.setToolTipText("Add this header when the request does not already carry it");
         }
 
-        Ui.Ellipsis preview = new Ui.Ellipsis(Theme.mono(), Theme.accent());
+        Preview preview = new Preview();
         Runnable updatePreview = () -> {
             String name = withField != null ? withField.getText() : matchField.getText();
             String token = sampleToken(tokenName);
@@ -676,10 +643,10 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             preview.set(composed);
         };
         updatePreview.run();
-        matchField.onChange(t -> updatePreview.run());
-        formatField.onChange(t -> updatePreview.run());
+        onChange(matchField, t -> updatePreview.run());
+        onChange(formatField, t -> updatePreview.run());
         if (withField != null) {
-            withField.onChange(t -> updatePreview.run());
+            onChange(withField, t -> updatePreview.run());
         }
 
         Runnable sync = () -> {
@@ -700,18 +667,41 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             boolean on = box.isSelected();
             onToggle.accept(on);
             sync.run();
-            say(label + " " + (on ? "will be rewritten with " + tokenName + "." : "will be left alone."),
-                    Theme.accent());
+            say(label + " " + (on ? "will be rewritten with " + tokenName + "." : "will be left alone."), false);
         });
         if (addBox != null) {
             addBox.addActionListener((ActionEvent e) -> {
                 onAddToggle.accept(addBox.isSelected());
-                say("'Add if missing' for " + label + " " + (addBox.isSelected() ? "on." : "off."), Theme.accent());
+                say("'Add if missing' for " + label + " " + (addBox.isSelected() ? "on." : "off."), false);
             });
         }
         sync.run();
 
-        return new Component[] { box, matchField, withField, formatField, addBox, preview };
+        c.gridx = 0;
+        c.weightx = 0;
+        c.fill = GridBagConstraints.NONE;
+        grid.add(box, c);
+
+        c.gridx = 1;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        grid.add(matchField, c);
+
+        c.gridx = 2;
+        grid.add(withField == null ? new JLabel("-") : withField, c);
+
+        c.gridx = 3;
+        c.weightx = 0;
+        c.fill = GridBagConstraints.NONE;
+        grid.add(formatField, c);
+
+        c.gridx = 4;
+        grid.add(addBox == null ? new JLabel("") : addBox, c);
+
+        c.gridx = 5;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        grid.add(preview, c);
     }
 
     /** A real captured token if there is one, otherwise a readable placeholder. */
@@ -724,100 +714,110 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         return "<" + tokenName + ">";
     }
 
-    private UiTextField field(String value, Consumer<String> setter, boolean isRegex, String label) {
-        UiTextField field = new UiTextField(value, 18);
-        field.onChange(text -> {
+    /**
+     * A read-only line that shrinks with its column instead of forcing the row
+     * wider, since a token is far longer than the space a preview can have.
+     */
+    private static class Preview extends JLabel {
+        void set(String text) {
+            setText(text);
+            setToolTipText(text);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            return new Dimension(60, super.getPreferredSize().height);
+        }
+
+        @Override
+        public Dimension getMinimumSize() {
+            return new Dimension(40, super.getPreferredSize().height);
+        }
+
+        @Override
+        public String getText() {
+            String text = super.getText();
+            if (text == null || getWidth() <= 0) {
+                return text;
+            }
+            FontMetrics metrics = getFontMetrics(getFont());
+            if (metrics.stringWidth(text) <= getWidth()) {
+                return text;
+            }
+            int end = text.length();
+            while (end > 0 && metrics.stringWidth(text.substring(0, end) + "...") > getWidth()) {
+                end--;
+            }
+            return text.substring(0, end) + "...";
+        }
+    }
+
+    private JTextField field(String value, Consumer<String> setter, boolean isRegex, String label) {
+        JTextField field = new JTextField(value, 16);
+        final Border normal = field.getBorder();
+        final Border invalid = BorderFactory.createLineBorder(Color.RED);
+        onChange(field, text -> {
+            // A blank value is never a usable rule, and refusing it also keeps
+            // the previous value intact while a paste is in flight: replacing
+            // the text deletes it first, and that empty moment would otherwise
+            // be applied as a pattern that matches everything.
+            if (text.trim().isEmpty()) {
+                field.setBorder(invalid);
+                field.setToolTipText("Empty - the previous value is still in use");
+                say(label + " is empty, not applied - the previous value is still in use.", true);
+                return;
+            }
             if (isRegex) {
                 try {
                     Pattern.compile(text);
                 } catch (Exception ex) {
-                    field.setInvalidInput(true, ex.getMessage());
-                    say(label + ": invalid RegEx, not applied - " + firstLine(ex.getMessage()), Theme.danger());
+                    field.setBorder(invalid);
+                    field.setToolTipText(ex.getMessage());
+                    say(label + ": invalid RegEx, not applied - " + firstLine(ex.getMessage()), true);
                     return;
                 }
             }
-            field.setInvalidInput(false, null);
+            field.setBorder(normal);
             setter.accept(text);
-            say(label + " set to  " + text, Theme.ok());
+            say(label + " set to " + text, false);
         });
         return field;
     }
 
-    // ------------------------------------------------------------ status bar
-
-    /** The strip along the bottom: a state dot, the last message, the project link. */
-    private class StatusBar extends JPanel {
-        private final JLabel message = new JLabel();
-        private Color dot = Theme.ok();
-
-        StatusBar() {
-            setLayout(new BorderLayout(Theme.SPACE_SM, 0));
-            setOpaque(false);
-            setBorder(BorderFactory.createEmptyBorder(Theme.SPACE_SM, Theme.SPACE_XL, Theme.SPACE_SM,
-                    Theme.SPACE_XL));
-            message.setFont(Theme.small());
-            message.setForeground(Theme.dim());
-
-            JPanel left = Ui.row(Theme.SPACE_SM);
-            left.add(new Dot());
-            left.add(message);
-            add(left, BorderLayout.WEST);
-            add(Ui.link("XsessionHandler on GitHub", Config.PROJECT_LINK), BorderLayout.EAST);
-        }
-
-        void set(String text, Color color) {
-            dot = color;
-            message.setText(text);
-            repaint();
-        }
-
-        @Override
-        public Dimension getMaximumSize() {
-            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setColor(Theme.surface());
-            g2.fillRect(0, 0, getWidth(), getHeight());
-            g2.setColor(Theme.lineStrong());
-            g2.drawLine(0, 0, getWidth(), 0);
-            g2.dispose();
-        }
-
-        /** The state dot: one glance tells you informational from error. */
-        private class Dot extends JComponent {
-            Dot() {
-                setPreferredSize(new Dimension(8, 8));
-                setMaximumSize(new Dimension(8, 8));
-                setAlignmentY(CENTER_ALIGNMENT);
+    private static void onChange(JTextField field, Consumer<String> handler) {
+        field.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                handler.accept(field.getText());
             }
 
             @Override
-            protected void paintComponent(Graphics g) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(Theme.alpha(dot, 70));
-                g2.fillOval(-2, -2, getWidth() + 4, getHeight() + 4);
-                g2.setColor(dot);
-                g2.fillOval(0, 0, getWidth(), getHeight());
-                g2.dispose();
+            public void removeUpdate(DocumentEvent e) {
+                handler.accept(field.getText());
             }
-        }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                handler.accept(field.getText());
+            }
+        });
     }
+
+    // ------------------------------------------------------------ status bar
 
     @Override
     public void status(String message) {
         SwingUtilities.invokeLater(() -> {
-            say(message, Theme.accent());
+            say(message, false);
             refreshStats();
         });
     }
 
-    private void say(String text, Color color) {
-        if (statusBar != null) {
-            statusBar.set(text, color);
+    /** Last thing that happened. Only a problem gets colour. */
+    private void say(String text, boolean problem) {
+        if (status != null) {
+            status.setText(text);
+            status.setForeground(problem ? Color.RED : UIManager.getColor("Label.foreground"));
         }
     }
 
