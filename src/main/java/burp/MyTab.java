@@ -120,7 +120,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
     private JScrollPane scrollable(JComponent content) {
         JPanel padded = new JPanel(new BorderLayout());
         padded.setOpaque(false);
-        padded.setBorder(BorderFactory.createEmptyBorder(14, 16, 14, 16));
+        padded.setBorder(BorderFactory.createEmptyBorder(10, 14, 10, 14));
         padded.add(content, BorderLayout.NORTH);
 
         JScrollPane scroll = new JScrollPane(padded);
@@ -265,11 +265,11 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         debug.add(rejectLogs);
 
         captureBody.add(filters);
-        captureBody.add(Box.createVerticalStrut(12));
+        captureBody.add(Box.createVerticalStrut(8));
         captureBody.add(extract);
-        captureBody.add(Box.createVerticalStrut(12));
+        captureBody.add(Box.createVerticalStrut(8));
         captureBody.add(scope);
-        captureBody.add(Box.createVerticalStrut(12));
+        captureBody.add(Box.createVerticalStrut(8));
         captureBody.add(debug);
         setEnabledDeep(captureBody, Config.CAPTURE_ENABLED);
         return captureBody;
@@ -307,12 +307,12 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 Config.REPLACE_STRUCTURE_TOKEN1_HEAD_1, v -> Config.REPLACE_STRUCTURE_TOKEN1_HEAD_1 = v,
                 Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_1,
                 v -> Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_1 = v, "TOKEN-1");
-        addReplace(grid1, 3, "A second header", Config.CHECK_TOKEN1_HEADER_2, v -> Config.CHECK_TOKEN1_HEADER_2 = v,
+        addReplace(grid1, 2, "A second header", Config.CHECK_TOKEN1_HEADER_2, v -> Config.CHECK_TOKEN1_HEADER_2 = v,
                 Config.VAL_JWT_HEADER_NAME_2, v -> Config.VAL_JWT_HEADER_NAME_2 = v, false, null, null,
                 Config.REPLACE_STRUCTURE_TOKEN1_HEAD_2, v -> Config.REPLACE_STRUCTURE_TOKEN1_HEAD_2 = v,
                 Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_2,
                 v -> Config.CHECK_TOKEN1_HEADER_ADD_IF_NOT_EXIST_2 = v, "TOKEN-1");
-        addReplace(grid1, 5, "A body parameter", Config.CHECK_TOKEN1_BODY, v -> Config.CHECK_TOKEN1_BODY = v,
+        addReplace(grid1, 3, "A body parameter", Config.CHECK_TOKEN1_BODY, v -> Config.CHECK_TOKEN1_BODY = v,
                 Config.VAL_JWT_BODY_NAME_1, v -> Config.VAL_JWT_BODY_NAME_1 = v, true,
                 Config.VAL_JWT_BODY_NAME_2, v -> Config.VAL_JWT_BODY_NAME_2 = v,
                 Config.REPLACE_STRUCTURE_TOKEN1_BODY, v -> Config.REPLACE_STRUCTURE_TOKEN1_BODY = v, null, null,
@@ -327,7 +327,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                 Config.REPLACE_STRUCTURE_TOKEN2_HEAD, v -> Config.REPLACE_STRUCTURE_TOKEN2_HEAD = v,
                 Config.CHECK_TOKEN2_HEADER_ADD_IF_NOT_EXIST, v -> Config.CHECK_TOKEN2_HEADER_ADD_IF_NOT_EXIST = v,
                 "TOKEN-2");
-        addReplace(grid2, 3, "A body parameter", Config.CHECK_TOKEN2_BODY, v -> Config.CHECK_TOKEN2_BODY = v,
+        addReplace(grid2, 2, "A body parameter", Config.CHECK_TOKEN2_BODY, v -> Config.CHECK_TOKEN2_BODY = v,
                 Config.VAL_TOKEN2_BODY_PARAM_NAME_1, v -> Config.VAL_TOKEN2_BODY_PARAM_NAME_1 = v, true,
                 Config.VAL_TOKEN2_BODY_PARAM_NAME_2, v -> Config.VAL_TOKEN2_BODY_PARAM_NAME_2 = v,
                 Config.REPLACE_STRUCTURE_TOKEN2_BODY, v -> Config.REPLACE_STRUCTURE_TOKEN2_BODY = v, null, null,
@@ -335,9 +335,9 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         token2.add(grid2);
 
         injectBody.add(tools);
-        injectBody.add(Box.createVerticalStrut(12));
+        injectBody.add(Box.createVerticalStrut(8));
         injectBody.add(token1);
-        injectBody.add(Box.createVerticalStrut(12));
+        injectBody.add(Box.createVerticalStrut(8));
         injectBody.add(token2);
         setEnabledDeep(injectBody, Config.AUTO_REPLACE_ENABLED);
         return injectBody;
@@ -525,7 +525,7 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
     private void addSetting(JPanel grid, int row, String label, boolean checked, Consumer<Boolean> onToggle,
                             String value, Consumer<String> setter, boolean isRegex, String hint) {
         GridBagConstraints c = new GridBagConstraints();
-        c.insets = new Insets(3, 0, 3, 8);
+        c.insets = new Insets(2, 0, 2, 8);
         c.gridy = row;
         c.anchor = GridBagConstraints.WEST;
 
@@ -571,8 +571,9 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
     }
 
     /**
-     * One replacement position: a control row plus a live preview row beneath
-     * it showing what the request will actually end up carrying.
+     * One replacement position: a single control row. The live "sends ..."
+     * preview is shown as a tooltip on the row's fields instead of an
+     * always-visible extra row, so each position takes one line, not two.
      */
     private void addReplace(JPanel grid, int row, String label, boolean checked, Consumer<Boolean> onToggle,
                             String matchValue, Consumer<String> matchSetter, boolean matchIsRegex,
@@ -580,24 +581,24 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
                             String formatValue, Consumer<String> formatSetter,
                             Boolean addChecked, Consumer<Boolean> onAddToggle, String tokenName) {
         GridBagConstraints c = new GridBagConstraints();
-        c.insets = new Insets(3, 0, 1, 8);
+        c.insets = new Insets(2, 0, 1, 8);
         c.gridy = row;
         c.anchor = GridBagConstraints.WEST;
 
+        String matchHint = matchIsRegex ? "RegEx matched against the request body"
+                : "the header prefix to look for, ex: Authorization: Bearer";
+        String formatHint = "First %s is the name, second %s is the token";
+
         JCheckBox box = Ui.checkBox(label, checked);
         UiTextField matchField = field(matchValue, matchSetter, matchIsRegex, label);
-        matchField.hint(matchIsRegex ? "RegEx matched against the request body"
-                : "the header prefix to look for, ex: Authorization: Bearer");
         UiTextField withField = withValue == null ? null : field(withValue, withSetter, false, label);
         UiTextField formatField = field(formatValue, formatSetter, false, label);
         formatField.setColumns(5);
-        formatField.hint("First %s is the name, second %s is the token");
         JCheckBox addBox = addChecked == null ? null : Ui.checkBox("Add if missing", addChecked);
         if (addBox != null) {
             addBox.setToolTipText("Add this header when the request does not already carry it");
         }
 
-        JLabel preview = Ui.muted("");
         Runnable updatePreview = () -> {
             String name = withField != null ? withField.getText() : matchField.getText();
             String token = sampleToken(tokenName);
@@ -607,8 +608,12 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             } catch (Exception e) {
                 composed = name + token;
             }
-            preview.setText("sends   " + composed);
-            preview.setToolTipText(composed);
+            String sends = "sends   " + composed;
+            matchField.hint(matchHint + "   —   " + sends);
+            formatField.hint(formatHint + "   —   " + sends);
+            if (withField != null) {
+                withField.hint(sends);
+            }
         };
         updatePreview.run();
         matchField.onChange(t -> updatePreview.run());
@@ -628,7 +633,6 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             if (addBox != null) {
                 addBox.setEnabled(on);
             }
-            preview.setEnabled(on);
             say(label + " " + (on ? "will be rewritten with " + tokenName + "." : "will be left alone."),
                     Theme.accent());
         });
@@ -644,7 +648,6 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
             withField.setEnabled(checked);
         }
         formatField.setEnabled(checked);
-        preview.setEnabled(checked);
 
         c.gridx = 0;
         c.weightx = 0;
@@ -670,17 +673,6 @@ public class MyTab implements ITab, IExtensionStateListener, MyHttpListener.Stat
         c.gridx = 4;
         c.fill = GridBagConstraints.NONE;
         grid.add(addBox == null ? Ui.muted("") : addBox, c);
-
-        // preview line, indented under the match column
-        GridBagConstraints p = new GridBagConstraints();
-        p.gridy = row + 1;
-        p.gridx = 1;
-        p.gridwidth = 4;
-        p.weightx = 1;
-        p.anchor = GridBagConstraints.WEST;
-        p.fill = GridBagConstraints.HORIZONTAL;
-        p.insets = new Insets(0, 2, 7, 8);
-        grid.add(preview, p);
     }
 
     /** A real captured token if there is one, otherwise a readable placeholder. */

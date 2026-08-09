@@ -6,12 +6,16 @@ import java.awt.Cursor;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.font.TextAttribute;
 import java.net.URI;
+import java.util.HashMap;
+import java.util.Map;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -62,7 +66,11 @@ public final class Ui {
     /** A blue clickable label that opens a URL. */
     public static JLabel link(String text, String url) {
         JLabel label = new JLabel(text);
-        label.setFont(Theme.base());
+        Font plainFont = Theme.base();
+        Map<TextAttribute, Object> underlineAttrs = new HashMap<TextAttribute, Object>(plainFont.getAttributes());
+        underlineAttrs.put(TextAttribute.UNDERLINE, TextAttribute.UNDERLINE_ON);
+        Font underlinedFont = plainFont.deriveFont(underlineAttrs);
+        label.setFont(plainFont);
         label.setForeground(Theme.accent());
         label.setCursor(new Cursor(Cursor.HAND_CURSOR));
         label.setToolTipText(url);
@@ -78,12 +86,12 @@ public final class Ui {
 
             @Override
             public void mouseEntered(MouseEvent e) {
-                label.setText("<html><u>" + text + "</u></html>");
+                label.setFont(underlinedFont);
             }
 
             @Override
             public void mouseExited(MouseEvent e) {
-                label.setText(text);
+                label.setFont(plainFont);
             }
         });
         return label;

@@ -77,7 +77,7 @@ TOKEN-1 has three positions (two headers and a body parameter), TOKEN-2 has two.
 | Format | How name and token are joined. `%s %s` gives `Authorization: Bearer eyJ...`; `%s%s` gives no space |
 | Add if missing | Header rows only - add the header when the request does not already carry it |
 
-Under every row a live **sends** preview shows exactly what the request will carry, using a real captured token when there is one.
+Hover a row's fields to see a live **sends** preview of exactly what the request will carry, using a real captured token when there is one.
 
 ### Tokens - what has been captured
 
@@ -105,28 +105,6 @@ Get employee tokens for   ->  Shp-Path: /Module3/Employee/
 
 When a request goes out, SH+ picks the token whose stored path best matches the request URL: exact match first, then progressively shorter parent paths, then the `/` entry as a fallback.
 
-## Injection in action
-
-Token-1 taken from the store and written into the request header (left: original request, right: what SH+ actually sent):
-
-<kbd>![](images/common/3ASimple.png)</kbd>
-
-Token-2 written into the request:
-
-<kbd>![](images/common/3BSimple.png)</kbd>
-
-Tokens captured for several applications with different paths:
-
-<kbd>![](images/demo/Multi-App/1.Get-Tokens.png)</kbd>
-
-**Note:** the three screenshots above come from the original Jython extension, which needed session handling rules. The request rewriting they show is the same; the setup they show is no longer needed.
-
-#### Videos (original extension)
-
-[![Simple Demo on SH+ Burp Suite Extension](https://img.youtube.com/vi/2vjhKZMKqco/0.jpg)](https://www.youtube.com/watch?v=2vjhKZMKqco)
-
-[![Multi-application Demo on SH+ Burp Suite Extension](https://img.youtube.com/vi/0zRph3K8LWw/0.jpg)](https://www.youtube.com/watch?v=0zRph3K8LWw)
-
 ## Build & Installation
 
 This is a pure Java Burp extension - no Jython interpreter required.
@@ -148,6 +126,13 @@ mvn clean package
 The extension jar is written to `target/session-handler-plus.jar`.
 
 ## Changelog
+
+**v1.1** - UI density pass
+
+- Tightened spacing across the Capture/Inject tabs so both fit with far less scrolling.
+- The Inject tab's per-row "sends" preview is now a hover tooltip instead of a permanent extra row.
+- Fixed the credit link's hover state, which could show raw HTML tags under some look-and-feels.
+- Removed the old Jython-extension screenshots/videos from this README.
 
 **v1.0** - first release of XsessionHandler
 

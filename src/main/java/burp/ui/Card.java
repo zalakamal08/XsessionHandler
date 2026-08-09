@@ -26,7 +26,7 @@ public class Card extends JPanel {
     public Card(String step, String title, String subtitle) {
         setLayout(new BorderLayout());
         setOpaque(false);
-        setBorder(BorderFactory.createEmptyBorder(10, 12, 12, 12));
+        setBorder(BorderFactory.createEmptyBorder(7, 10, 8, 10));
         setAlignmentX(Component.LEFT_ALIGNMENT);
 
         JPanel header = new JPanel(new BorderLayout(10, 0));
@@ -67,7 +67,7 @@ public class Card extends JPanel {
 
         content.setOpaque(false);
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        content.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
+        content.setBorder(BorderFactory.createEmptyBorder(7, 0, 0, 0));
 
         add(header, BorderLayout.NORTH);
         add(content, BorderLayout.CENTER);
