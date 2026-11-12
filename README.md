@@ -127,12 +127,15 @@ The extension jar is written to `target/session-handler-plus.jar`.
 
 ## Changelog
 
-**v1.1** - UI density pass
+**v1.1** - Capture from headers, skip lists, persisted settings
 
-- Tightened spacing across the Capture/Inject tabs so both fit with far less scrolling.
-- The Inject tab's per-row "sends" preview is now a hover tooltip instead of a permanent extra row.
-- Fixed the credit link's hover state, which could show raw HTML tags under some look-and-feels.
-- Removed the old Jython-extension screenshots/videos from this README.
+- **Capture from response headers.** A token RegEx can now run against the response headers, the body, or both (the new default). A token delivered in `Set-Cookie` or a custom header - e.g. `Set-Cookie: sid=([^;]+)` - is captured with no extra request. Earlier builds read the response body only, so a header-only token was silently missed. Pick the scope with the **Look for the token in:** selector on the Capture tab.
+- **Inject skip list.** Requests whose URL matches a skip list are sent exactly as written, so a fresh token is never replayed into a `/logout` or into the very `/login` that mints the next token.
+- **Persisted settings.** Your Capture/Inject configuration is saved and restored across Burp restarts, so you set up an app once.
+- **Stock-Swing rebuild.** The tab was rebuilt on Burp's own look and feel, matching the light and dark themes, with the master **Capture**/**Inject** switches and live counters visible from every tab.
+- Tightened spacing so the Capture and Inject tabs fit with far less scrolling, and moved the Inject "sends" preview to a hover tooltip.
+
+> **Upgrading from v1.0:** the v1.0 jar reads tokens from the response **body only**. If your token arrives in a `Set-Cookie` or custom header, load this v1.1 jar and set **Look for the token in:** to *Response headers* (or the default *Headers and body*).
 
 **v1.0** - first release of XsessionHandler
 

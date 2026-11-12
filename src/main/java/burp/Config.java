@@ -9,7 +9,7 @@ public final class Config {
     public static final String VAL_ABOUT_SHP_MINI = "Author: Vinaya Kumar      [GitHub: https://github.com/V9Y1nf0S3C/Session-Handler-Plus]      Purpose: Session handling for JWT/AccessToken/RefreshToken";
     public static final String VAL_REF_LINK = "https://github.com/V9Y1nf0S3C/Session-Handler-Plus";
 
-    public static final String EXT_VERSION = "v1.0";
+    public static final String EXT_VERSION = "v1.1";
     public static final String AUTHOR_HANDLE = "zalakamal08";
     public static final String AUTHOR_LINK = "https://github.com/zalakamal08";
     public static final String PROJECT_LINK = "https://github.com/zalakamal08/XsessionHandler";
